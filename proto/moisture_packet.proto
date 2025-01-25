@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package cl3;
+
+message MoisturePacket {
+  float pmoisture = 1;
+  uint32  imoisture = 2;
+  //  float vbus = 3;
+  float tempC = 4;
+  float humidity = 5;
+  uint32 msec = 6;
+  float vsolar = 7;
+  float vbattery = 8;
+}

@@ -1,0 +1,14 @@
+.pio/
+*~
+.vscode
+.ccls
+**/.ccls-cache
+**/data/mqtt.json
+**/data/wifi.json
+secrets*.ini
+secrets*.yaml
+.dir-locals.el
+*.old
+/scad/*/*.3mf
+/KiCAD/*-backups/
+/KiCAD/Gerber/
