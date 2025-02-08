@@ -12,3 +12,5 @@ secrets*.yaml
 /scad/*/*.3mf
 /KiCAD/*-backups/
 /KiCAD/Gerber/
+/KiCAD/Garden133/Garden133-backups/
+/KiCAD/Garden133/Gerber/

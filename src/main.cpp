@@ -3,13 +3,15 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <LoRa.h>
+#include <og3/constants.h>
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
+#include <og3/lora.h>
 #include <og3/shtc3.h>
-#include <LoRa.h>
 #include <pb_encode.h>
 
-#include "moisture_packet.pb.h"
+#include "device.pb.h"
 
 #define VERSION "0.1.0"
 
@@ -25,6 +27,8 @@ constexpr App::LogType kLogType = App::LogType::kUdp;
 // constexpr App::LogType kLogType = App::LogType::kNone;  // kSerial
 constexpr App::LogType kLogType = App::LogType::kSerial;
 #endif
+
+constexpr uint32_t kCleeOrg = 0xc133;
 
 HAApp s_app(HAApp::Options(kManufacturer, kModel,
                            WifiApp::Options()
@@ -55,42 +59,75 @@ bool s_is_debug_mode = false;
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
+void _on_lora_initialized() {
+  LoRa.setSpreadingFactor(12);
+  // Change sync word (0xF3) to match the receiver
+  // The sync word assures you don't get LoRa messages from other LoRa transceivers
+  // ranges from 0-0xFF
+  LoRa.setSyncWord(0xF3);
+}
 
-class RFM95Module : public Module {
-public:
-  static constexpr unsigned kMaxInitTries = 10;
-  
- RFM95Module(const char* name, HAApp* app, VariableGroup& vg)
-   : Module(name, &app->module_system()), m_app(app) {
-    add_init_fn([this]() {
-      // setup LoRa transceiver module
-      LoRa.setPins(og3::kLoraSS, og3::kLoraRst, og3::kLoraDio0);
-      LoRa.setSpreadingFactor(12);
-    });
-    add_start_fn([this]() { this->setup_module(); });
- }
+#define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
- private:
-  void setup_module() {
-    m_init_tries += 1;
-    if (!LoRa.begin(915e6)) {
-      og3::s_app.log().logf("Failed to setup LoRa: %u/%u tries.", m_init_tries, kMaxInitTries);
-      if (m_init_tries < kMaxInitTries) {
-        m_app->tasks().runIn(500, [this]() { setup_module(); });
-      }
+const og3_Sensor s_sensor_temp{0x1 /*TODO: id*/, "temp", "C"};
+const og3_Sensor s_sensor_humidity{0x2 /*TODO: id*/, "humidity", "%"};
+const og3_Sensor s_sensor_moisture{0x3 /*TODO: id*/, "soil moisture", "%"};
+
+LoRaModule s_lora("lora", LoRaModule::Options(), &s_app, s_vg, _on_lora_initialized);
+
+template <typename T>
+void copy(T& dest, const T& src){memcpy(&dest, &src, sizeof(dest));}
+
+class PacketSender {
+ public:
+  PacketSender() {}
+  void update() {
+    const int64_t now_secs = esp_timer_get_time() / kUsecInSec;
+    if ((now_secs - m_secs_sensor_sent) < kSecInMin) {
       return;
     }
-    m_is_ok = true;
-    og3::s_app.log().logf("Setup LoRa in %u tries.", m_init_tries);
-  }
-    
-  App* m_app;
-  unsigned m_init_tries = 0;
-  bool m_is_ok = false;
-};
+    const bool update_device =
+        m_secs_device_sent == 0 || (now_secs - m_secs_device_sent) > kSecInHour;
+    og3_Packet packet og3_Packet_init_zero;
+    packet.has_device = update_device;
+    packet.has_device = m_secs_device_sent == 0 || (now_secs - m_secs_device_sent) > kSecInHour;
+    if (update_device) {
+      packet.device.id = 0x2;
+      packet.device.manufacturer = kCleeOrg;
+      SETSTR(packet.device.name, "Garden133");
+      packet.device.hardware_version.major = 3;
+      packet.device.hardware_version.minor = 0;
+      packet.device.software_version.major = 0;
+      packet.device.software_version.minor = 1;
+    }
+    packet.component_count = 3;
+    packet.component[0].which_kind = og3_TemperatureSensor_sensor_tag;
+    packet.component[1].which_kind = og3_HumiditySensor_sensor_tag;
+    packet.component[2].which_kind = og3_MoistureSensor_sensor_tag;
+    auto& temp = packet.component[0].kind.temperature;
+    auto& humid = packet.component[1].kind.humidity;
+    auto& moist = packet.component[2].kind.moisture;
+    if (update_device) {
+      temp.has_sensor = 1;
+      humid.has_sensor = 1;
+      moist.has_sensor = 1;
+      copy(temp.sensor, s_sensor_temp);
+      copy(humid.sensor, s_sensor_humidity);
+      copy(moist.sensor, s_sensor_moisture);
+    }
+    temp.value = 25;
+    humid.value = 50;
+    moist.percent = 40;
 
-RFM95Module s_rfm95("rfm95", &s_app, s_vg);
-  
+    char buffer[og3_Packet_size];
+    
+  }
+
+ private:
+  uint64_t m_secs_device_sent = 0;
+  // TODO(chrishl): device_sent_wakeups in storage surviving deep sleep.
+  uint64_t m_secs_sensor_sent = 0;
+};
 
 // Global variable for html, so asyncwebserver can send data in the background (single client)
 String s_html;
@@ -101,15 +138,14 @@ WebButton s_button_app_status = s_app.createAppStatusButton();
 WebButton s_button_restart = s_app.createRestartButton();
 
 void handleWebRoot(AsyncWebServerRequest* request) {
+  s_html.clear();
   html::writeTableInto(&s_html, s_vg);
   html::writeTableInto(&s_html, s_app.wifi_manager().variables());
   html::writeTableInto(&s_html, s_app.mqtt_manager().variables());
-#if 0
   s_button_wifi_config.add_button(&s_html);
   s_button_mqtt_config.add_button(&s_html);
   s_button_app_status.add_button(&s_html);
   s_button_restart.add_button(&s_html);
-#endif
   sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
 }
 
@@ -118,6 +154,7 @@ void handleWebRoot(AsyncWebServerRequest* request) {
 ////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
+  pinMode(og3::kDebugSwitchPin, INPUT);
   og3::s_app.web_server().on("/", og3::handleWebRoot);
   og3::s_app.web_server().on("/config", [](AsyncWebServerRequest* request) {});
   og3::s_app.setup();
