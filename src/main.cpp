@@ -8,8 +8,12 @@
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
 #include <og3/lora.h>
+#include <og3/packet_writer.h>
 #include <og3/shtc3.h>
+#include <og3/tasks.h>
 #include <pb_encode.h>
+
+#include <memory>
 
 #include "device.pb.h"
 
@@ -29,6 +33,7 @@ constexpr App::LogType kLogType = App::LogType::kSerial;
 #endif
 
 constexpr uint32_t kCleeOrg = 0xc133;
+constexpr uint16_t kDevicePktType = 0xde1c;
 
 HAApp s_app(HAApp::Options(kManufacturer, kModel,
                            WifiApp::Options()
@@ -69,14 +74,12 @@ void _on_lora_initialized() {
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
-const og3_Sensor s_sensor_temp{0x1 /*TODO: id*/, "temp", "C"};
-const og3_Sensor s_sensor_humidity{0x2 /*TODO: id*/, "humidity", "%"};
-const og3_Sensor s_sensor_moisture{0x3 /*TODO: id*/, "soil moisture", "%"};
-
 LoRaModule s_lora("lora", LoRaModule::Options(), &s_app, s_vg, _on_lora_initialized);
 
 template <typename T>
-void copy(T& dest, const T& src){memcpy(&dest, &src, sizeof(dest));}
+void copy(T& dest, const T& src) {
+  memcpy(&dest, &src, sizeof(dest));
+}
 
 class PacketSender {
  public:
@@ -84,8 +87,10 @@ class PacketSender {
   void update() {
     const int64_t now_secs = esp_timer_get_time() / kUsecInSec;
     if ((now_secs - m_secs_sensor_sent) < kSecInMin) {
+      s_app.log().log("PacketSender::update() not time yet.");
       return;
     }
+    s_app.log().log("PacketSender::update() preparing packet.");
     const bool update_device =
         m_secs_device_sent == 0 || (now_secs - m_secs_device_sent) > kSecInHour;
     og3_Packet packet og3_Packet_init_zero;
@@ -100,34 +105,58 @@ class PacketSender {
       packet.device.software_version.major = 0;
       packet.device.software_version.minor = 1;
     }
-    packet.component_count = 3;
-    packet.component[0].which_kind = og3_TemperatureSensor_sensor_tag;
-    packet.component[1].which_kind = og3_HumiditySensor_sensor_tag;
-    packet.component[2].which_kind = og3_MoistureSensor_sensor_tag;
-    auto& temp = packet.component[0].kind.temperature;
-    auto& humid = packet.component[1].kind.humidity;
-    auto& moist = packet.component[2].kind.moisture;
-    if (update_device) {
-      temp.has_sensor = 1;
-      humid.has_sensor = 1;
-      moist.has_sensor = 1;
-      copy(temp.sensor, s_sensor_temp);
-      copy(humid.sensor, s_sensor_humidity);
-      copy(moist.sensor, s_sensor_moisture);
-    }
-    temp.value = 25;
-    humid.value = 50;
-    moist.percent = 40;
 
-    char buffer[og3_Packet_size];
-    
+    auto set = [](og3_FloatSensorReading& reading, uint32_t id, float val, bool set_sensor,
+                  const char* name, const char* units, og3_Sensor_Type type) {
+      reading.sensor_id = id;
+      reading.has_sensor = set_sensor;
+      reading.value = val;
+      if (set_sensor) {
+        reading.sensor.id = id;
+        SETSTR(reading.sensor.name, name);
+        SETSTR(reading.sensor.units, units);
+	reading.sensor.type = type;
+      }
+    };
+
+    packet.reading_count = 3;
+    constexpr bool kSetSensor = true;
+    set(packet.reading[0], 0x1, 25.0, kSetSensor, "temperature", "C",
+        og3_Sensor_Type_TYPE_TEMPERATURE);
+    set(packet.reading[1], 0x2, 50.0, kSetSensor, "humidity", "%", og3_Sensor_Type_TYPE_HUMIDITY);
+    set(packet.reading[2], 0x3, 40.0, kSetSensor, "soil moisture", "%",
+        og3_Sensor_Type_TYPE_MOISTURE);
+
+    uint8_t msg_buffer[og3_Packet_size];
+    pb_ostream_t ostream = pb_ostream_from_buffer(msg_buffer, sizeof(msg_buffer));
+    if (!pb_encode(&ostream, &og3_Packet_msg, &packet)) {
+      s_app.log().log("Failed to pb_encode packet.");
+      return;
+    }
+
+    uint8_t pkt_buffer[og3_Packet_size + pkt::kHeaderSize + pkt::kMsgHeaderSize];
+    pkt::PacketWriter writer(pkt_buffer, sizeof(pkt_buffer), m_seq_id);
+    if (!writer.add_message(kDevicePktType, msg_buffer, ostream.bytes_written)) {
+      s_app.log().log("Failed to add device msg to packet.");
+      return;
+    }
+    LoRa.beginPacket();
+    LoRa.write(pkt_buffer, writer.packet_size());
+    LoRa.endPacket();
+    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_seq_id, ostream.bytes_written);
+    m_seq_id += 1;
   }
 
  private:
+  uint16_t m_seq_id = 0;
   uint64_t m_secs_device_sent = 0;
   // TODO(chrishl): device_sent_wakeups in storage surviving deep sleep.
   uint64_t m_secs_sensor_sent = 0;
 };
+
+PacketSender s_packet_sender;
+
+std::unique_ptr<PeriodicTaskScheduler> s_hourly_lora;
 
 // Global variable for html, so asyncwebserver can send data in the background (single client)
 String s_html;
@@ -154,7 +183,20 @@ void handleWebRoot(AsyncWebServerRequest* request) {
 ////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
+  Serial.begin(115200);
   pinMode(og3::kDebugSwitchPin, INPUT);
+  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+  // Serial.printf("debug mode? %s\n", og3::s_is_debug_mode ? "DEBUG" : "PROD");
+
+  if (!og3::s_is_debug_mode) {
+    og3::s_app.wifi_manager().set_enable(false);
+  } else {
+    constexpr auto kInitialWait = 10 * og3::kMsecInSec;
+    constexpr auto kUpdatePeriod = og3::kMsecInMin;
+    og3::s_hourly_lora.reset(new og3::PeriodicTaskScheduler(
+        kInitialWait, kUpdatePeriod, []() { og3::s_packet_sender.update(); }, &og3::s_app.tasks()));
+  }
+
   og3::s_app.web_server().on("/", og3::handleWebRoot);
   og3::s_app.web_server().on("/config", [](AsyncWebServerRequest* request) {});
   og3::s_app.setup();

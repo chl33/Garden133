@@ -1,6 +1,7 @@
 #include "packet_reader.h"
 
 #include <stdio.h>
+#include <algorithm>
 
 namespace og3::satpkt {
 namespace {
@@ -33,10 +34,9 @@ PacketReader::ParseResult PacketReader::parse() {
   if (static_cast<int32_t>(kPktMsgHeaderSize * m_num_msgs) > msgs_size) {
     return ParseResult::kBadSize;
   }
-  int32_t msgs_data_left = msgs_size;
-  const unsigned num_parse_msg = (m_num_msgs < 8) ? m_num_msgs : 8;
+  m_num_available_msgs = std::min(kMaxAvailableMsgs, m_num_msgs);
   unsigned offset = kPktHeaderSize;
-  for (unsigned i = 0; i < num_parse_msg; i++) {
+  for (unsigned i = 0; i < m_num_available_msgs; i++) {
     if (offset + kPktMsgHeaderSize > m_pkt_size) {
       return ParseResult::kBadSize;
     }

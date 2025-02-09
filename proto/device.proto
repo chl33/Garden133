@@ -8,30 +8,21 @@ message Sensor {
   uint32 id = 1;
   string name = 2 [(nanopb).max_length = 15];
   string units = 3 [(nanopb).max_length = 7];
-}
 
-message TemperatureSensor {
-  Sensor sensor = 1;
-  float value = 2;
-}
-
-message HumiditySensor {
-  Sensor sensor = 1;
-  float value = 2;
-}
-
-message MoistureSensor {
-  Sensor sensor = 1;
-  float percent = 2;
-  uint32 raw_value = 3;
-}
-
-message Component {
-  oneof kind {
-    TemperatureSensor temperature = 1;
-    HumiditySensor humidity = 2;
-    MoistureSensor moisture = 3;
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_VOLTAGE = 1;
+    TYPE_TEMPERATURE = 2;
+    TYPE_HUMIDITY = 3;
+    TYPE_MOISTURE = 4;
   }
+  Type type = 4;
+}
+
+message FloatSensorReading {
+  uint32 sensor_id = 1;
+  Sensor sensor = 2;
+  float value = 3;
 }
 
 message Version {
@@ -49,6 +40,7 @@ message Device {
 }
 
 message Packet {
-  Device device = 1;
-  repeated Component component = 2 [(nanopb).max_length = 40, (nanopb).max_count = 4];
+  uint32 device_id = 1;
+  Device device = 2;
+  repeated FloatSensorReading reading = 3 [(nanopb).max_length = 40, (nanopb).max_count = 4];
 }

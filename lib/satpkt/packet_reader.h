@@ -18,6 +18,7 @@ class PacketReader {
     kBadPrefix = 2,
     kBadVersion = 3,
   };
+  static constexpr uint16_t kMaxAvailableMsgs = 16;
 
   ParseResult parse();
 
@@ -33,8 +34,9 @@ class PacketReader {
   uint16_t m_pkt_size = 0;
   uint16_t m_seq_id = 0xff;
   uint16_t m_num_msgs = 0;
-  uint16_t m_msg_sizes[8];
-  uint16_t m_msg_offsets[8];
+  uint16_t m_num_available_msgs = 0;
+  uint16_t m_msg_sizes[kMaxAvailableMsgs];
+  uint16_t m_msg_offsets[kMaxAvailableMsgs];
 };
 
 }  // namespace og3::satpkt

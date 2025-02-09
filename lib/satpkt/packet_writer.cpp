@@ -31,6 +31,9 @@ PacketWriter::PacketWriter(uint8_t* buffer, std::size_t nbytes, uint16_t seq_id)
 }
 
 bool PacketWriter::add_message(uint16_t type, const uint8_t* msg, uint16_t msg_size) {
+  if (!is_ok()) {
+    return false;
+  }
   const uint32_t msg_end = m_pkt_size + kPktMsgHeaderSize + (msg_size + 3) / 4 * 4;
   if (msg_end > m_buffer_size) {
     return false;
