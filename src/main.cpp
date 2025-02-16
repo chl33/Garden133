@@ -8,9 +8,11 @@
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
 #include <og3/lora.h>
+#include <og3/mapped_analog_sensor.h>
 #include <og3/packet_writer.h>
 #include <og3/shtc3.h>
 #include <og3/tasks.h>
+#include <og3/units.h>
 #include <pb_encode.h>
 
 #include <memory>
@@ -18,6 +20,9 @@
 #include "device.pb.h"
 
 #define VERSION "0.1.0"
+
+// - Deep sleep
+// - Packet indicates debug mode
 
 namespace og3 {
 
@@ -46,8 +51,8 @@ HAApp s_app(HAApp::Options(kManufacturer, kModel,
                                .withOta(OtaManager::Options(OTA_PASSWORD))
                                .withApp(App::Options().withLogType(kLogType))));
 
-VariableGroup s_cvg("garage_cfg");
-VariableGroup s_vg("garage");
+VariableGroup s_cvg("garden_cfg");
+VariableGroup s_vg("garden");
 
 static const char kTemperature[] = "temperature";
 static const char kHumidity[] = "humidity";
@@ -58,6 +63,8 @@ constexpr int kLoraSS = 5;
 constexpr int kLoraRst = 14;
 constexpr int kLoraDio0 = 2;
 constexpr int kDebugSwitchPin = 33;
+
+constexpr int kMoisturePin = 32;
 
 bool s_lora_ok = false;
 bool s_is_debug_mode = false;
@@ -81,15 +88,66 @@ void copy(T& dest, const T& src) {
   memcpy(&dest, &src, sizeof(dest));
 }
 
+class MoistureSensor {
+ public:
+  MoistureSensor()
+      : m_mapped_adc(
+            {
+                .name = "soil moisture",
+                .pin = kMoisturePin,
+                .units = units::kPercentage,
+                .raw_description = "soil moisture raw value",
+                .description = "soil moisture",
+                .raw_var_flags = 0,
+                .mapped_var_flags = 0,
+                .config_flags = kCfgSet,
+                .default_in_min = kNoMoistureCounts,
+                .default_in_max = kFullMoistureCounts,
+                .default_out_min = 0.0f,
+                .default_out_max = 100.0f,
+                .config_decimals = 0,
+                .decimals = 1,
+                .valid_in_min = 50,
+                .valid_in_max = 1 << 12,
+            },
+            &s_app.module_system(), s_cvg, s_vg) {}
+
+  float read() { return m_mapped_adc.read(); }
+  float value() const { return m_mapped_adc.value(); }
+
+ private:
+  // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
+  // Default ADC reading at which to consider soil moisture to be 100%.
+  static constexpr unsigned kFullMoistureCounts = 100;  // 2*1000/3;
+  // Default ADC reading at which to consider soil moisture to be 0%.
+  static constexpr unsigned kNoMoistureCounts = 450;  // 2*2800/2;
+
+  static constexpr unsigned kCfgSet = VariableBase::Flags::kConfig | VariableBase::Flags::kSettable;
+
+  MappedAnalogSensor m_mapped_adc;
+};
+
+MoistureSensor s_moisture;
+
 class PacketSender {
  public:
   PacketSender() {}
   void update() {
+    // TODO: Update logic for deep sleep.
     const int64_t now_secs = esp_timer_get_time() / kUsecInSec;
     if ((now_secs - m_secs_sensor_sent) < kSecInMin) {
       s_app.log().log("PacketSender::update() not time yet.");
       return;
     }
+
+    // Read the temp/humdity sensor and the moisture sensor.
+    s_shtc3.read();
+    s_moisture.read();
+
+    if (s_is_debug_mode) {
+      s_app.mqttSend(s_vg);
+    }
+
     s_app.log().log("PacketSender::update() preparing packet.");
     const bool update_device =
         m_secs_device_sent == 0 || (now_secs - m_secs_device_sent) > kSecInHour;
@@ -115,17 +173,22 @@ class PacketSender {
         reading.sensor.id = id;
         SETSTR(reading.sensor.name, name);
         SETSTR(reading.sensor.units, units);
-	reading.sensor.type = type;
+        reading.sensor.type = type;
       }
     };
 
-    packet.reading_count = 3;
+    unsigned count = 0;
     constexpr bool kSetSensor = true;
-    set(packet.reading[0], 0x1, 25.0, kSetSensor, "temperature", "C",
-        og3_Sensor_Type_TYPE_TEMPERATURE);
-    set(packet.reading[1], 0x2, 50.0, kSetSensor, "humidity", "%", og3_Sensor_Type_TYPE_HUMIDITY);
-    set(packet.reading[2], 0x3, 40.0, kSetSensor, "soil moisture", "%",
+    if (s_shtc3.ok()) {
+      set(packet.reading[count++], 0x1, s_shtc3.temperature(), kSetSensor, "temperature", "C",
+          og3_Sensor_Type_TYPE_TEMPERATURE);
+      set(packet.reading[count++], 0x2, s_shtc3.humidity(), kSetSensor, "humidity", "%",
+          og3_Sensor_Type_TYPE_HUMIDITY);
+    }
+
+    set(packet.reading[count++], 0x3, s_moisture.value(), kSetSensor, "soil moisture", "%",
         og3_Sensor_Type_TYPE_MOISTURE);
+    packet.reading_count = count;
 
     uint8_t msg_buffer[og3_Packet_size];
     pb_ostream_t ostream = pb_ostream_from_buffer(msg_buffer, sizeof(msg_buffer));
@@ -145,6 +208,7 @@ class PacketSender {
     LoRa.endPacket();
     s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_seq_id, ostream.bytes_written);
     m_seq_id += 1;
+    m_secs_device_sent = now_secs;
   }
 
  private:
@@ -167,6 +231,8 @@ WebButton s_button_app_status = s_app.createAppStatusButton();
 WebButton s_button_restart = s_app.createRestartButton();
 
 void handleWebRoot(AsyncWebServerRequest* request) {
+  s_moisture.read();
+  s_shtc3.read();
   s_html.clear();
   html::writeTableInto(&s_html, s_vg);
   html::writeTableInto(&s_html, s_app.wifi_manager().variables());
