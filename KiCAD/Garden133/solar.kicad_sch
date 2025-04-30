@@ -2491,6 +2491,16 @@
 		)
 		(uuid "9ba0691f-8cb8-4310-884b-918c6c6aee27")
 	)
+	(text "VBAT-"
+		(exclude_from_sim no)
+		(at 49.022 107.95 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "b000c84c-8ac1-4b09-933d-8acf4a15d69e")
+	)
 	(text "VSOLAR-\n"
 		(exclude_from_sim no)
 		(at 48.514 66.548 0)
@@ -3065,28 +3075,6 @@
 			)
 		)
 	)
-	(global_label "VBATTERY-"
-		(shape input)
-		(at 54.61 107.95 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "74f53b06-1703-42d6-baae-6c8dc576e8eb")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 41.2418 107.95 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-				(hide yes)
-			)
-		)
-	)
 	(global_label "VBATTERY+"
 		(shape input)
 		(at 54.61 100.33 180)
@@ -3635,6 +3623,72 @@
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/68ad4c29-b646-4e97-9a96-445ccffd346c"
 					(reference "#PWR48")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 54.61 107.95 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2e66af9d-a3dc-427d-9053-98b67ba59639")
+		(property "Reference" "#PWR049"
+			(at 54.61 114.3 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 54.61 113.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 54.61 107.95 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 54.61 107.95 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 54.61 107.95 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "7f7c43ee-f308-45b6-86ee-df4b99bb324a")
+		)
+		(instances
+			(project "Garden133"
+				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/68ad4c29-b646-4e97-9a96-445ccffd346c"
+					(reference "#PWR049")
 					(unit 1)
 				)
 			)

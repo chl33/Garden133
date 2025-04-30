@@ -14,3 +14,5 @@ secrets*.yaml
 /KiCAD/Gerber/
 /KiCAD/Garden133/Garden133-backups/
 /KiCAD/Garden133/Gerber/
+*.kicad_sch-bak
+*.3mf
