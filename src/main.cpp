@@ -18,6 +18,7 @@
 #include <pb_encode.h>
 
 #include <memory>
+#include <vector>
 
 #include "device.pb.h"
 
@@ -93,6 +94,7 @@ RTC_DATA_ATTR struct {
 
 bool s_lora_ok = false;
 bool s_is_debug_mode = false;
+bool s_pause_sleep = false;
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
@@ -192,6 +194,7 @@ class MoistureSensor : public ConfigModule {
   float read() { return m_mapped_adc.read(); }
   float value() const { return m_mapped_adc.value(); }
   int raw_counts() const { return m_mapped_adc.raw_counts(); }
+  Variable<unsigned>& countsVar() { return m_mapped_adc.raw_value(); }
 
  private:
   // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
@@ -225,10 +228,10 @@ int64_t total_usecs() {
   return esp_timer_get_time() + total_sleep_usecs;
 }
 
-class ADV20Mez10 : public ConfigModule {
+class AdcVoltage : public ConfigModule {
   // voltage divider with 10k, 20k(mez) R.
  public:
-  ADV20Mez10(const char* name, uint8_t pin, const char* raw_desc, const char* desc, float out_max)
+  AdcVoltage(const char* name, uint8_t pin, const char* raw_desc, const char* desc, float out_max)
       : ConfigModule(name),
         m_mapped_adc(
             {
@@ -262,13 +265,13 @@ class ADV20Mez10 : public ConfigModule {
   MappedAnalogSensor m_mapped_adc;
 };
 
-ADV20Mez10 s_five_v_sensor("fivev voltage", kFiveVPin, "fivev raw value",
+AdcVoltage s_five_v_sensor("fivev voltage", kFiveVPin, "fivev raw value",
                            "voltage from battery or solar", 3.3 * 2);
 
-ADV20Mez10 s_battery_sensor("battery voltage", kBatteryPin, "battery raw value", nullptr,
+AdcVoltage s_battery_sensor("battery voltage", kBatteryPin, "battery raw value", nullptr,
                             3.3 * 32.0 / 22.0);
 
-ADV20Mez10 s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nullptr,
+AdcVoltage s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nullptr,
                           3.3 * 32.0 / 22.0);
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
@@ -276,93 +279,234 @@ Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
+class PacketReading {
+ public:
+  PacketReading(unsigned sensor_id, og3_Sensor_Type sensor_type)
+      : m_sensor_id(sensor_id), m_sensor_type(sensor_type) {}
+
+  virtual bool read() = 0;
+  virtual bool write(og3_Packet& packet, bool include_info) = 0;
+
+ protected:
+  const unsigned m_sensor_id;
+  const og3_Sensor_Type m_sensor_type;
+};
+
+class PacketFloatReading : public PacketReading {
+ public:
+  PacketFloatReading(unsigned sensor_id, og3_Sensor_Type sensor_type, const FloatVariable& var)
+      : PacketReading(sensor_id, sensor_type), m_var(var) {}
+
+  bool write(og3_Packet& packet, bool include_info) override {
+    auto& reading = packet.reading[packet.reading_count];
+    reading.sensor_id = m_sensor_id;
+    reading.has_sensor = include_info;
+    reading.value = m_var.value();
+    if (include_info) {
+      reading.sensor.id = m_sensor_id;
+      SETSTR(reading.sensor.name, m_var.name());
+      SETSTR(reading.sensor.units, m_var.units());
+      reading.sensor.type = m_sensor_type;
+    }
+    packet.reading_count += 1;
+    return true;
+  }
+
+ private:
+  const FloatVariable& m_var;
+};
+
+class PacketTemperatureReading : public PacketFloatReading {
+ public:
+  PacketTemperatureReading(unsigned sensor_id, Shtc3& shtc3)
+      : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_TEMPERATURE, shtc3.temperatureVar()),
+        m_shtc3(shtc3) {}
+
+  bool read() final {
+    m_shtc3.read();
+    return m_shtc3.ok();
+  }
+  bool write(og3_Packet& packet, bool include_info) final {
+    if (!m_shtc3.ok()) {
+      return false;
+    }
+    return PacketFloatReading::write(packet, include_info);
+  }
+
+ private:
+  Shtc3& m_shtc3;
+};
+
+class PacketHumidityReading : public PacketFloatReading {
+ public:
+  PacketHumidityReading(unsigned sensor_id, Shtc3& shtc3)
+      : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_HUMIDITY, shtc3.humidityVar()),
+        m_shtc3(shtc3) {}
+
+  bool read() final {
+    // Assume read() happened in PacketTemperatureReading
+    return m_shtc3.ok();
+  }
+  bool write(og3_Packet& packet, bool include_info) final {
+    if (!m_shtc3.ok()) {
+      return false;
+    }
+    return PacketFloatReading::write(packet, include_info);
+  }
+
+ private:
+  Shtc3& m_shtc3;
+};
+
+class PacketVoltageReading : public PacketFloatReading {
+ public:
+  PacketVoltageReading(unsigned sensor_id, AdcVoltage& adc)
+      : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_VOLTAGE, adc.valueVariable()),
+        m_adc(adc) {}
+
+  bool read() final {
+    m_adc.read();
+    return true;
+  }
+
+ private:
+  AdcVoltage& m_adc;
+};
+
+class PacketMoistureReading : public PacketFloatReading {
+ public:
+  PacketMoistureReading(unsigned sensor_id, MoistureSensor& moisture, KernelFilter& moisture_filter)
+      : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_MOISTURE,
+                           moisture_filter.valueVariable()),
+        m_moisture(moisture),
+        m_moisture_filter(moisture_filter) {}
+
+  bool read() {
+    const int64_t now_usecs = total_usecs();
+    m_moisture_filter.addSample(now_usecs * 1e-6, m_moisture.read());
+    return true;
+  }
+
+ private:
+  MoistureSensor& m_moisture;
+  KernelFilter& m_moisture_filter;
+};
+
+class PacketIntReading : public PacketReading {
+ public:
+  PacketIntReading(unsigned sensor_id, const char* desc, Variable<unsigned>& ivar)
+      : PacketReading(sensor_id, og3_Sensor_Type_TYPE_INT_NUMBER), m_desc(desc), m_ivar(ivar) {}
+
+  bool read() override { return true; }
+  bool write(og3_Packet& packet, bool include_info) override {
+    auto& reading = packet.i_reading[packet.i_reading_count];
+    reading.sensor_id = m_sensor_id;
+    reading.has_sensor = include_info;
+    reading.value = m_ivar.value();
+    if (include_info) {
+      reading.sensor.id = m_sensor_id;
+      SETSTR(reading.sensor.name, m_desc);
+      reading.sensor.type = m_sensor_type;
+    }
+    packet.i_reading_count += 1;
+    return true;
+  }
+
+ private:
+  const char* m_desc;
+  Variable<unsigned>& m_ivar;
+};
+
 class PacketSender {
  public:
-  PacketSender() {}
-  void update() {
-    const int64_t now_usecs = total_usecs();
-    const int64_t now_secs = now_usecs / kUsecInSec;
+  PacketSender() {
+    auto idx = [this]() { return m_readings.size(); };
+    m_readings.emplace_back(new PacketTemperatureReading(idx(), s_shtc3));
+    m_readings.emplace_back(new PacketHumidityReading(idx(), s_shtc3));
+    m_readings.emplace_back(new PacketMoistureReading(idx(), s_moisture, s_moisture_filter));
+    m_readings.emplace_back(new PacketVoltageReading(idx(), s_five_v_sensor));
+    m_readings.emplace_back(new PacketVoltageReading(idx(), s_battery_sensor));
+    m_readings.emplace_back(new PacketVoltageReading(idx(), s_solar_sensor));
+    m_readings.emplace_back(new PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
+    m_readings.emplace_back(new PacketIntReading(idx(), "status", s_status_var));
+  }
 
-    // Read the temp/humdity sensor and the moisture sensor.
-    s_shtc3.read();
-    s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
+  void send_reading_i_with_desc(unsigned i) {
+    if (i >= m_readings.size()) {
+      return;
+    }
+    auto reading = m_readings[i].get();
+    if (!reading->read()) {
+      return;
+    }
+    og3_Packet packet og3_Packet_init_zero;
+    start_packet(packet, true);
+    reading->write(packet, true);
+    send_packet(packet);
+  }
 
-    s_five_v_sensor.read();
-    s_battery_sensor.read();
-    s_solar_sensor.read();
-
+  void send_all_readings() {
     s_status_var = og3::s_rtc.code;
     s_board_id_var = og3::s_board_id;
 
+    for (auto& fr : m_readings) {
+      fr->read();
+    }
     if (s_is_debug_mode) {
       s_app.mqttSend(s_vg);
     }
-
     s_app.log().debug("PacketSender::update() preparing packet.");
-    // Update-device logic should work when not in debug mode.
-    // was: m_secs_device_sent == 0 || (now_secs - m_secs_device_sent) > kSecInHour;
-    const bool update_device = true;
-    const bool update_sensors = true;
     og3_Packet packet og3_Packet_init_zero;
+    start_packet(packet, false);
+    for (auto& fr : m_readings) {
+      fr->write(packet, false);
+    }
+    send_packet(packet);
+  }
+
+  void send_descs(unsigned idx) {
+    s_pause_sleep = true;
+    send_reading_i_with_desc(idx);
+    const unsigned i_next = idx + 1;
+    if (i_next < m_readings.size()) {
+      s_app.tasks().runIn(kMsecInSec, [this, i_next]() { send_descs(i_next); });
+    } else {
+      s_pause_sleep = false;
+      const int64_t now_usecs = total_usecs();
+      const int64_t now_secs = now_usecs / kUsecInSec;
+      m_secs_device_sent = now_secs;
+    }
+  }
+
+  void update() {
+    const int64_t now_usecs = total_usecs();
+    const int64_t now_secs = now_usecs / kUsecInSec;
+    const int64_t secs_since_info_sent = now_secs - m_secs_device_sent;
+    s_app.log().logf("now_secs:%llu secs_since_info_sent:%llu", now_secs, secs_since_info_sent);
+    if (now_secs < 60 || secs_since_info_sent >= 3600) {
+      send_descs(0);
+    } else {
+      send_all_readings();
+    }
+  }
+
+ protected:
+  void start_packet(og3_Packet& packet, bool update_device) {
     packet.device_id = s_board_id;
     packet.has_device = update_device;
-    if (update_device) {
-      packet.device.id = s_board_id;
-      packet.device.manufacturer = kCleeOrg;
-      SETSTR(packet.device.name, "Garden133");
-      packet.device.hardware_version.major = 3;
-      packet.device.hardware_version.minor = 0;
-      packet.device.software_version.major = 0;
-      packet.device.software_version.minor = 1;
+    if (!update_device) {
+      return;
     }
+    packet.device.id = s_board_id;
+    packet.device.manufacturer = kCleeOrg;
+    SETSTR(packet.device.name, "Garden133");
+    packet.device.hardware_version.major = 6;
+    packet.device.hardware_version.minor = 0;
+    packet.device.software_version.major = 0;
+    packet.device.software_version.minor = 2;
+  }
 
-    unsigned sensor_id = 0;
-
-    auto set = [&sensor_id, &packet, update_sensors](const FloatVariable& var,
-                                                     og3_Sensor_Type type) {
-      auto& reading = packet.reading[packet.reading_count];
-      reading.sensor_id = sensor_id;
-      reading.has_sensor = update_sensors;
-      reading.value = var.value();
-      if (update_sensors) {
-        reading.sensor.id = sensor_id;
-        SETSTR(reading.sensor.name, var.name());
-        SETSTR(reading.sensor.units, var.units());
-        reading.sensor.type = type;
-      }
-      packet.reading_count += 1;
-      sensor_id += 1;
-    };
-
-    auto i_set = [&sensor_id, &packet, update_sensors](uint32_t val, const char* name,
-                                                       const char* units, og3_Sensor_Type type) {
-      auto& reading = packet.i_reading[packet.i_reading_count];
-      reading.sensor_id = sensor_id;
-      reading.has_sensor = update_sensors;
-      reading.value = val;
-      if (update_sensors) {
-        reading.sensor.id = sensor_id;
-        SETSTR(reading.sensor.name, name);
-        SETSTR(reading.sensor.units, units);
-        reading.sensor.type = type;
-      }
-      packet.i_reading_count += 1;
-      sensor_id += 1;
-    };
-
-    if (s_shtc3.ok()) {
-      set(s_shtc3.temperatureVar(), og3_Sensor_Type_TYPE_TEMPERATURE);
-      set(s_shtc3.humidityVar(), og3_Sensor_Type_TYPE_HUMIDITY);
-    }
-
-    set(s_moisture_filter.valueVariable(), og3_Sensor_Type_TYPE_MOISTURE);
-    set(s_five_v_sensor.valueVariable(), og3_Sensor_Type_TYPE_VOLTAGE);
-    set(s_battery_sensor.valueVariable(), og3_Sensor_Type_TYPE_VOLTAGE);
-    // set(s_solar_sensor.valueVariable(), og3_Sensor_Type_TYPE_VOLTAGE);
-
-    i_set(s_moisture.raw_counts(), "soil ADC counts", "", og3_Sensor_Type_TYPE_INT_NUMBER);
-    i_set(s_rtc.code, "status", "", og3_Sensor_Type_TYPE_INT_NUMBER);
-
+  void send_packet(og3_Packet& packet) {
     uint8_t msg_buffer[og3_Packet_size];
     pb_ostream_t ostream = pb_ostream_from_buffer(msg_buffer, sizeof(msg_buffer));
     if (!pb_encode(&ostream, &og3_Packet_msg, &packet)) {
@@ -385,12 +529,9 @@ class PacketSender {
 
     s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_seq_id, ostream.bytes_written);
     m_seq_id += 1;
-    if (update_device) {
-      m_secs_device_sent = now_secs;
-    }
   }
 
- private:
+  std::vector<std::unique_ptr<PacketReading>> m_readings;
   uint16_t m_seq_id = 0;
   uint64_t m_secs_device_sent = 0;
 };
@@ -498,7 +639,7 @@ void setup() {
 void loop() {
   og3::s_app.loop();
 
-  if (og3::s_is_debug_mode) {
+  if (og3::s_is_debug_mode || og3::s_pause_sleep) {
     return;  // In debug mode, we don't run the stuff below which puts the board into deep sleep.
   }
 

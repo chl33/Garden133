@@ -16,3 +16,4 @@ secrets*.yaml
 /KiCAD/Garden133/Gerber/
 *.kicad_sch-bak
 *.3mf
+board*.ini
