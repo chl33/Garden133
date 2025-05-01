@@ -277,8 +277,7 @@ AdcVoltage s_five_v_sensor("fivev voltage", kFiveVPin, "fivev raw value",
 AdcVoltage s_battery_sensor("battery voltage", kBatteryPin, "battery raw value", nullptr,
                             3.3 * 32.0 / 22.0);
 
-AdcVoltage s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nullptr,
-                          3.3 * 32.0 / 22.0);
+AdcVoltage s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nullptr, 3.3 * 2);
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
 Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
