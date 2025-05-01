@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <LoRa.h>
+#include <og3/blink_led.h>
 #include <og3/constants.h>
 #include <og3/dependencies.h>
 #include <og3/ha_app.h>
@@ -69,6 +70,7 @@ constexpr int kBatteryPin = 33;    // ADC1_CH5
 constexpr int kMoisturePin = 34;   // ADC1_CH6
 constexpr int kSolarPlusPin = 35;  // ADC1_CH7
 constexpr int kDebugSwitchPin = 04;
+constexpr int kLedPin = 16;
 
 // Sleep for 1 minute between readings (for now).
 constexpr unsigned kSleepSecs = kSecInMin;
@@ -84,6 +86,8 @@ constexpr unsigned kFilterRestoreFailure = 0x8;
 constexpr unsigned kFilterSaveFailure = 0x10;
 }  // namespace Status
 
+constexpr unsigned kBlinkMsec = 200;
+
 // This data should persist during deep sleep.
 RTC_DATA_ATTR struct {
   uint16_t bootCount = 0;
@@ -95,6 +99,8 @@ RTC_DATA_ATTR struct {
 bool s_lora_ok = false;
 bool s_is_debug_mode = false;
 bool s_pause_sleep = false;
+
+BlinkLed s_led("mode_led", kLedPin, &s_app, kBlinkMsec, false);
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
@@ -442,7 +448,9 @@ class PacketSender {
     og3_Packet packet og3_Packet_init_zero;
     start_packet(packet, true);
     reading->write(packet, true);
-    send_packet(packet);
+    // Don't blink if board will go to sleep immediately after sending the packet.
+    const bool blink = s_is_debug_mode || i + 1 < m_readings.size();
+    send_packet(packet, blink);
   }
 
   void send_all_readings() {
@@ -461,7 +469,8 @@ class PacketSender {
     for (auto& fr : m_readings) {
       fr->write(packet, false);
     }
-    send_packet(packet);
+    const bool blink = s_is_debug_mode;
+    send_packet(packet, blink);
   }
 
   void send_descs(unsigned idx) {
@@ -506,7 +515,7 @@ class PacketSender {
     packet.device.software_version.minor = 2;
   }
 
-  void send_packet(og3_Packet& packet) {
+  void send_packet(og3_Packet& packet, bool blink) {
     uint8_t msg_buffer[og3_Packet_size];
     pb_ostream_t ostream = pb_ostream_from_buffer(msg_buffer, sizeof(msg_buffer));
     if (!pb_encode(&ostream, &og3_Packet_msg, &packet)) {
@@ -529,6 +538,10 @@ class PacketSender {
 
     s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_seq_id, ostream.bytes_written);
     m_seq_id += 1;
+
+    if (blink) {
+      s_led.blink();
+    }
   }
 
   std::vector<std::unique_ptr<PacketReading>> m_readings;
@@ -623,11 +636,14 @@ void setup() {
     }
     // build a board-id from the mac address.
   } else {
+    // This is debug mode.
     constexpr auto kInitialWait = 10 * og3::kMsecInSec;
     constexpr auto kUpdatePeriod = og3::kMsecInMin;
     WiFi.macAddress(og3::s_rtc.mac);
     og3::s_hourly_lora.reset(new og3::PeriodicTaskScheduler(
         kInitialWait, kUpdatePeriod, []() { og3::s_packet_sender.update(); }, &og3::s_app.tasks()));
+    // Blink twice on boot if debug mode.
+    og3::s_led.blink(2);
   }
   // Constuct a board ID from the MAC address.
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
