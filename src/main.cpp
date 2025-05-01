@@ -614,7 +614,7 @@ void setup() {
   if (og3::s_is_debug_mode) {
     og3::s_rtc.code |= og3::Status::kDebugMode;
   } else {
-    og3::s_rtc.code = og3::s_is_debug_mode ? og3::Status::kDebugMode : 0;
+    og3::s_rtc.code = 0;
   }
 
   if (!og3::s_is_debug_mode) {
@@ -654,9 +654,13 @@ void setup() {
 void loop() {
   og3::s_app.loop();
 
+  // Check debug-mode again, so we can switch away from debug mode while the board is running.
+  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+
   if (og3::s_is_debug_mode || og3::s_pause_sleep) {
     return;  // In debug mode, we don't run the stuff below which puts the board into deep sleep.
   }
+  og3::s_rtc.code &= ~og3::Status::kDebugMode;
 
   // This is normal operation: send a LoRa packet and then do deep sleep.
   if (og3::s_lora.is_ok()) {
