@@ -400,7 +400,7 @@ class PacketMoistureReading : public PacketFloatReading {
 class PacketIntReading : public PacketReading {
  public:
   PacketIntReading(unsigned sensor_id, const char* desc, Variable<unsigned>& ivar)
-      : PacketReading(sensor_id, og3_Sensor_Type_TYPE_INT_NUMBER), m_desc(desc), m_ivar(ivar) {}
+      : PacketReading(sensor_id, og3_Sensor_Type_TYPE_UNSPECIFIED), m_desc(desc), m_ivar(ivar) {}
 
   bool read() override { return true; }
   bool write(og3_Packet& packet, bool include_info) override {
