@@ -2578,10 +2578,22 @@
 		(uuid "d9243fea-f1b5-4156-8a3d-5420f1c69ec6")
 	)
 	(junction
+		(at 76.2 73.66)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "dbcf112b-023d-4ca5-be60-dd08fdbef857")
+	)
+	(junction
 		(at 110.49 39.37)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "df6670a2-6c8e-48bf-af36-b5368c58c5b9")
+	)
+	(junction
+		(at 71.12 76.2)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e714c824-0945-4ff7-a6b5-ea01ba375237")
 	)
 	(no_connect
 		(at 73.66 127)
@@ -2633,7 +2645,17 @@
 	)
 	(wire
 		(pts
-			(xy 64.77 76.2) (xy 81.28 76.2)
+			(xy 71.12 80.01) (xy 71.12 76.2)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "11bae688-c5ca-4175-bfb1-48b237fdbb70")
+	)
+	(wire
+		(pts
+			(xy 64.77 76.2) (xy 71.12 76.2)
 		)
 		(stroke
 			(width 0)
@@ -2893,6 +2915,16 @@
 	)
 	(wire
 		(pts
+			(xy 76.2 73.66) (xy 78.74 73.66)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ac73faad-0f2b-4679-beed-100bc75497b5")
+	)
+	(wire
+		(pts
 			(xy 77.47 53.34) (xy 77.47 58.42)
 		)
 		(stroke
@@ -2933,6 +2965,16 @@
 	)
 	(wire
 		(pts
+			(xy 62.23 82.55) (xy 76.2 82.55)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b781ab78-d209-495a-84ca-3e65836fb819")
+	)
+	(wire
+		(pts
 			(xy 63.5 121.92) (xy 62.23 121.92)
 		)
 		(stroke
@@ -2960,6 +3002,36 @@
 			(type default)
 		)
 		(uuid "c657e9c7-1d73-4df5-afa9-e9feca77fdb6")
+	)
+	(wire
+		(pts
+			(xy 76.2 82.55) (xy 76.2 73.66)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cb407643-4b32-4493-823b-62f487ab57a9")
+	)
+	(wire
+		(pts
+			(xy 62.23 80.01) (xy 71.12 80.01)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ce9df714-932b-4337-8829-a256fc231260")
+	)
+	(wire
+		(pts
+			(xy 71.12 76.2) (xy 81.28 76.2)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d26aceec-6632-49bb-b698-be3631bcd3f2")
 	)
 	(wire
 		(pts
@@ -3013,7 +3085,7 @@
 	)
 	(wire
 		(pts
-			(xy 72.39 73.66) (xy 78.74 73.66)
+			(xy 72.39 73.66) (xy 76.2 73.66)
 		)
 		(stroke
 			(width 0)
@@ -3097,6 +3169,28 @@
 			)
 		)
 	)
+	(global_label "GPIO27"
+		(shape input)
+		(at 62.23 80.01 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "b0af9538-e944-4d8d-8d22-be8db5a1d10b")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 52.3505 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
 	(global_label "VBATTERY+"
 		(shape input)
 		(at 118.11 58.42 0)
@@ -3137,6 +3231,28 @@
 					(size 1.27 1.27)
 				)
 				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GPIO26"
+		(shape input)
+		(at 62.23 82.55 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "f372a036-798d-4802-b82d-ec38e3ed2fec")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 52.3505 82.55 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
 				(hide yes)
 			)
 		)
@@ -4637,7 +4753,7 @@
 				)
 			)
 		)
-		(property "Value" "10k"
+		(property "Value" "20k"
 			(at 52.07 39.37 90)
 			(effects
 				(font
