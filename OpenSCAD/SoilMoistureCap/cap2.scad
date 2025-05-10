@@ -3,7 +3,7 @@ include <ProjectBox/headers.scad>
 
 // moisture_sensor_dims = [22.5, 92, 1.5];
 
-sensor_cap_length = 26;
+sensor_cap_length = 23;
 sensor_cap_top = 5;
 
 screw_diameter = 3;
@@ -86,14 +86,14 @@ module cap2(top) {
 	       -1])
       screw_hole();
     // Space for connector
-    translate([moisture_sensor_conn_offset[0],
+    translate([moisture_sensor_conn_offset[0] + 1,
 	       -1 + back_thickness,
 	       moisture_sensor_conn_offset[2]+wall]
 	      + [-moisture_sensor_conn_dims[0] / 2 - conn_space,
 		 -conn_space - conn_y_extra,
 		 -conn_space]) {
       cube(moisture_sensor_conn_dims
-	   + [conn_space*2, conn_space*2 + conn_y_extra + gap, conn_space*2 + 1]);
+	   + [conn_space*2 - 1, conn_space*2 + conn_y_extra + gap, conn_space*2 + 1]);
       translate([(moisture_sensor_conn_dims[0] + conn_space*2)/2, 2,
 		 moisture_sensor_conn_dims[2]/2 + conn_space])
 	rotate([90, 0, 0])

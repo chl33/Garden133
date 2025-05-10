@@ -4,7 +4,7 @@
 include <MCAD/units.scad>
 include <ProjectBox/headers.scad>
 
-moisture_sensor_dims = [22.5, 92, 1.5];
+moisture_sensor_dims = [22.5, 92, 1];
 
 pin_offset = [6, 4, 0];
 pin_size = [10, 2, 2];
