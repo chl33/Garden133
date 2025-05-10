@@ -16,7 +16,7 @@ back_pins_length = 2;
 connector_dims = connector_nx1_dims(3);
 
 conn_space = 1;
-conn_y_extra = 2;
+conn_y_extra = 5;
 
 wire_diameter = 3;
 
@@ -37,13 +37,13 @@ outer_dims = [inner_dims[0] + 2 * side_thickness,
 module sensor_space() {
   union() {
     cube(inner_dims);
-    cube(moisture_sensor_dims + gap*[2,2,2]);
+    translate(gap*[1,1,1]) cube(moisture_sensor_dims);
     component_z = 1.5;
     translate([0, 0, moisture_sensor_dims[2]])
       cube([moisture_sensor_dims[0]+gap*2, 30, component_z+2*gap]);
+    // Space for bottom pins.
     translate([pin_offset[0], pin_offset[1], pin_offset[2] - pin_size[2] + epsilon])
       cube(pin_size + gap*[2,2,2]);
-    // Space for bottom pins.
   }
 }
 
@@ -68,7 +68,9 @@ module cap2(top) {
 	       -1])
       cylinder(outer_dims[2]-1, screw_diameter/2, screw_diameter/2);
     // Space for connector
-    translate([moisture_sensor_conn_offset[0], -1 + back_thickness, moisture_sensor_conn_offset[2]+1]
+    translate([moisture_sensor_conn_offset[0],
+	       -1 + back_thickness,
+	       moisture_sensor_conn_offset[2]+1]
 	      + [-moisture_sensor_conn_dims[0] / 2 - conn_space,
 		 -conn_space - conn_y_extra,
 		 -conn_space]) {
@@ -79,13 +81,19 @@ module cap2(top) {
 	cylinder(20, wire_diameter/2, wire_diameter/2);
     }
     slice_z = bottom_thickness + gap + moisture_sensor_dims[2]/2;
+    wire_z = (moisture_sensor_conn_offset[2] + 1 + moisture_sensor_conn_dims[2]/2);
     if (!top) {
-	translate([-1, -1, slice_z]) cube(outer_dims + [10, 10, 10]);
+      translate([-1, wall+epsilon, slice_z]) cube(outer_dims + [10, 10, 10]);
+      translate([-1, -1, wire_z]) cube(outer_dims + [10, 1+wall+epsilon, 10]);
     } else {
-      translate([-1, -1, -1])
+      translate([-1, wall+epsilon, -1])
 	cube([outer_dims[0] + 2,
 	      outer_dims[1] + 2,
 	      slice_z + 1]);
+      translate([-1, -1, -1])
+	cube([outer_dims[0] + 2,
+	      1 + wall + 2*epsilon,
+	      wire_z + 1]);
     }
   }
 }
