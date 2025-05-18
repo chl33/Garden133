@@ -332,9 +332,6 @@ class PacketTemperatureReading : public PacketFloatReading {
     return m_shtc3.ok();
   }
   bool write(og3_Packet& packet, bool include_info) final {
-    if (!m_shtc3.ok()) {
-      return false;
-    }
     return PacketFloatReading::write(packet, include_info);
   }
 
@@ -380,6 +377,8 @@ class PacketVoltageReading : public PacketFloatReading {
 
 class PacketMoistureReading : public PacketFloatReading {
  public:
+  static constexpr float kMinVForValidReading = 3.2f;
+
   PacketMoistureReading(unsigned sensor_id, MoistureSensor& moisture, KernelFilter& moisture_filter)
       : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_MOISTURE,
                            moisture_filter.valueVariable()),
@@ -387,14 +386,26 @@ class PacketMoistureReading : public PacketFloatReading {
         m_moisture_filter(moisture_filter) {}
 
   bool read() {
+    // When the power supply is < 3.2V, it seems moisture sensor readings are not trustworthy.
+    m_is_ok = s_five_v_sensor.read() > kMinVForValidReading;
+    if (!m_is_ok) {
+      return false;
+    }
     const int64_t now_usecs = total_usecs();
     m_moisture_filter.addSample(now_usecs * 1e-6, m_moisture.read());
     return true;
+  }
+  bool write(og3_Packet& packet, bool include_info) final {
+    if (!m_is_ok) {
+      return false;
+    }
+    return PacketFloatReading::write(packet, include_info);
   }
 
  private:
   MoistureSensor& m_moisture;
   KernelFilter& m_moisture_filter;
+  bool m_is_ok = false;
 };
 
 class PacketIntReading : public PacketReading {
@@ -529,14 +540,18 @@ class PacketSender {
       s_app.log().log("Failed to add device msg to packet.");
       return;
     }
+    if (!writer.add_crc()) {
+      s_app.log().log("Failed to add CRC to packet.");
+      return;
+    }
 
     // Disable on new board until different MAC is detected.
     LoRa.beginPacket();
     LoRa.write(pkt_buffer, writer.packet_size());
     LoRa.endPacket();
 
-    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_seq_id, ostream.bytes_written);
-    m_seq_id += 1;
+    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", seq_id, ostream.bytes_written);
+    m_seq_id = seq_id + 1;
 
     if (blink) {
       s_led.blink();
