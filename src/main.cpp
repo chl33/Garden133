@@ -23,7 +23,7 @@
 
 #include "device.pb.h"
 
-#define VERSION "0.3.0"
+#define VERSION "0.4.0"
 
 namespace og3 {
 
@@ -34,8 +34,9 @@ static const char kSoftware[] = "Garden133 v" VERSION;
 #if defined(LOG_UDP) && defined(LOG_UDP_ADDRESS)
 constexpr App::LogType kLogType = App::LogType::kUdp;
 #else
-// constexpr App::LogType kLogType = App::LogType::kNone;  // kSerial
-constexpr App::LogType kLogType = App::LogType::kSerial;
+constexpr App::LogType kLogType =
+    App::LogType::kNone;  // kSerial
+                          // constexpr App::LogType kLogType = App::LogType::kSerial;
 #endif
 
 constexpr uint32_t kCleeOrg = 0xc133;
@@ -43,16 +44,17 @@ constexpr uint16_t kDevicePktType = 0xde1c;
 
 uint16_t s_board_id = 0xFF;
 
-HAApp s_app(HAApp::Options(kManufacturer, kModel,
-                           WifiApp::Options()
-                               .withSoftwareName(kSoftware)
-                               .withDefaultDeviceName("rooml33")
+HAApp s_app(
+    HAApp::Options(kManufacturer, kModel,
+                   WifiApp::Options()
+                       .withSoftwareName(kSoftware)
+                       .withDefaultDeviceName("garden133")
 #if defined(LOG_UDP) && defined(LOG_UDP_ADDRESS)
-                               .withUdpLogHost(IPAddress(LOG_UDP_ADDRESS))
+                       .withUdpLogHost(IPAddress(LOG_UDP_ADDRESS))
 
 #endif
-                               .withOta(OtaManager::Options(OTA_PASSWORD))
-                               .withApp(App::Options().withLogType(kLogType))));
+                       .withOta(OtaManager::Options(OTA_PASSWORD))
+                       .withApp(App::Options().withLogType(kLogType).withReserveTasks(64))));
 
 VariableGroup s_vg("garden");
 
@@ -86,21 +88,24 @@ constexpr unsigned kFilterRestoreFailure = 0x8;
 constexpr unsigned kFilterSaveFailure = 0x10;
 }  // namespace Status
 
-constexpr unsigned kBlinkMsec = 200;
+constexpr unsigned kBlinkMsec = 100;
 
 // This data should persist during deep sleep.
 RTC_DATA_ATTR struct {
-  uint16_t bootCount = 0;
+  uint16_t bootCount;
+  uint16_t seq_id;
   byte mac[6];
   KernelFilter::State<kFilterSize> filter_state;
-  unsigned code = 0;
+  unsigned code;
+  unsigned secs_device_sent;
 } s_rtc;
 
+bool s_boot = false;
 bool s_lora_ok = false;
 bool s_is_debug_mode = false;
 bool s_pause_sleep = false;
 
-BlinkLed s_led("mode_led", kLedPin, &s_app, kBlinkMsec, false);
+BlinkLed s_led("mode_led", kLedPin, &s_app, false);
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
@@ -437,6 +442,7 @@ class PacketSender {
  public:
   PacketSender() {
     auto idx = [this]() { return m_readings.size(); };
+    m_readings.reserve(8);
     m_readings.emplace_back(new PacketTemperatureReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketHumidityReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketMoistureReading(idx(), s_moisture, s_moisture_filter));
@@ -447,11 +453,19 @@ class PacketSender {
     m_readings.emplace_back(new PacketIntReading(idx(), "status", s_status_var));
   }
 
-  void send_reading_i_with_desc(unsigned i) {
-    if (i >= m_readings.size()) {
+  void set_need_to_send_descs(bool send_descs) {
+    m_descs_sent = send_descs ? 0 : m_readings.size();
+  }
+
+  bool sending_desc() const { return m_descs_sent < m_readings.size(); }
+
+  void send_desc() {
+    s_app.log().debugf("send_reading_i_with_desc(%u)", m_descs_sent);
+    if (!sending_desc()) {
       return;
     }
-    auto reading = m_readings[i].get();
+    s_pause_sleep = true;
+    auto reading = m_readings[m_descs_sent].get();
     if (!reading->read()) {
       return;
     }
@@ -459,20 +473,25 @@ class PacketSender {
     start_packet(packet, true);
     reading->write(packet, true);
     // Don't blink if board will go to sleep immediately after sending the packet.
-    const bool blink = s_is_debug_mode || i + 1 < m_readings.size();
+    m_descs_sent += 1;
+    const bool more_to_send = sending_desc();
+    const bool blink = s_is_debug_mode || more_to_send;
     send_packet(packet, blink);
+    s_pause_sleep = more_to_send;
+    if (more_to_send) {
+      s_app.tasks().runIn(kMsecInSec, [this]() { send_desc(); });
+    }
   }
 
   void send_all_readings() {
-    s_status_var = og3::s_rtc.code;
-    s_board_id_var = og3::s_board_id;
-
     for (auto& fr : m_readings) {
       fr->read();
     }
+#if 0
     if (s_is_debug_mode) {
       s_app.mqttSend(s_vg);
     }
+#endif
     s_app.log().debug("PacketSender::update() preparing packet.");
     og3_Packet packet og3_Packet_init_zero;
     start_packet(packet, false);
@@ -483,28 +502,20 @@ class PacketSender {
     send_packet(packet, blink);
   }
 
-  void send_descs(unsigned idx) {
-    s_pause_sleep = true;
-    send_reading_i_with_desc(idx);
-    const unsigned i_next = idx + 1;
-    if (i_next < m_readings.size()) {
-      s_app.tasks().runIn(kMsecInSec, [this, i_next]() { send_descs(i_next); });
-    } else {
-      s_pause_sleep = false;
-      const int64_t now_usecs = total_usecs();
-      const int64_t now_secs = now_usecs / kUsecInSec;
-      m_secs_device_sent = now_secs;
-    }
-  }
-
   void update() {
     const int64_t now_usecs = total_usecs();
     const int64_t now_secs = now_usecs / kUsecInSec;
-    const int64_t secs_since_info_sent = now_secs - m_secs_device_sent;
-    s_app.log().logf("now_secs:%llu secs_since_info_sent:%llu", now_secs, secs_since_info_sent);
-    if (now_secs < 60 || secs_since_info_sent >= 3600) {
-      send_descs(0);
+    const int64_t secs_since_info_sent = now_secs - s_rtc.secs_device_sent;
+    s_app.log().debugf("now_secs:%llu secs_since_info_sent:%llu", now_secs, secs_since_info_sent);
+    s_status_var = og3::s_rtc.code;
+    s_board_id_var = og3::s_board_id;
+
+    if (s_boot || secs_since_info_sent >= 3600) {
+      s_rtc.secs_device_sent = now_secs;
+      set_need_to_send_descs(true);
+      send_desc();
     } else {
+      set_need_to_send_descs(false);
       send_all_readings();
     }
   }
@@ -534,8 +545,7 @@ class PacketSender {
     }
 
     uint8_t pkt_buffer[og3_Packet_size + pkt::kHeaderSize + pkt::kMsgHeaderSize];
-    const uint16_t seq_id = s_is_debug_mode ? m_seq_id : s_rtc.bootCount;
-    pkt::PacketWriter writer(pkt_buffer, sizeof(pkt_buffer), seq_id);
+    pkt::PacketWriter writer(pkt_buffer, sizeof(pkt_buffer), s_rtc.seq_id++);
     if (!writer.add_message(kDevicePktType, msg_buffer, ostream.bytes_written)) {
       s_app.log().log("Failed to add device msg to packet.");
       return;
@@ -550,8 +560,8 @@ class PacketSender {
     LoRa.write(pkt_buffer, writer.packet_size());
     LoRa.endPacket();
 
-    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", seq_id, ostream.bytes_written);
-    m_seq_id = seq_id + 1;
+    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", s_rtc.seq_id - 1,
+                       ostream.bytes_written);
 
     if (blink) {
       s_led.blink();
@@ -559,8 +569,7 @@ class PacketSender {
   }
 
   std::vector<std::unique_ptr<PacketReading>> m_readings;
-  uint16_t m_seq_id = 0;
-  uint64_t m_secs_device_sent = 0;
+  unsigned m_descs_sent = 0;
 };
 
 PacketSender s_packet_sender;
@@ -619,6 +628,22 @@ void handleWebRoot(AsyncWebServerRequest* request) {
   sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
 }
 
+void start_sleep() {
+  s_app.log().debug("Sleeping");
+  s_rtc.code &= ~Status::kDebugMode;
+
+  // Save filter state to memory that is preserved when sleeping.
+  if (!s_moisture_filter.saveState(s_rtc.filter_state)) {
+    s_rtc.code |= Status::kFilterSaveFailure;
+  }
+
+  // After we go to sleep below, set a timer which will wakeup the board in 1 minute.
+  esp_sleep_enable_timer_wakeup(kSleepSecs * kUsecInSec);
+
+  // Shut down peripherals here.
+  esp_deep_sleep_start();
+}
+
 }  // namespace og3
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -637,20 +662,26 @@ void setup() {
     og3::s_app.wifi_manager().set_enable(false);
     if (og3::print_wakeup_reason()) {
       // Normal operation, but first-time boot, not waking from deep sleep.
-      og3::s_rtc.bootCount = 0;
+      og3::s_boot = true;
+      memset(&og3::s_rtc, 0, sizeof(og3::s_rtc));
       WiFi.macAddress(og3::s_rtc.mac);
       og3::s_rtc.code |= og3::Status::kPowerOn;
+      og3::s_app.log().debug("First wake, pausing sleep");
+      og3::s_pause_sleep = true;
     } else {
       // Normal operation, woke from deep sleep.
+      og3::s_boot = false;
       if (!og3::s_moisture_filter.restoreState(og3::s_rtc.filter_state)) {
         og3::s_rtc.code |= og3::Status::kFilterRestoreFailure;
       }
       og3::s_rtc.bootCount += 1;
       og3::s_rtc.code |= og3::Status::kDeepSleep;
+      og3::s_app.log().debugf("bootCount %u: code:0x%X", og3::s_rtc.bootCount, og3::s_rtc.code);
     }
     // build a board-id from the mac address.
   } else {
     // This is debug mode.
+    og3::s_boot = true;
     constexpr auto kInitialWait = 10 * og3::kMsecInSec;
     constexpr auto kUpdatePeriod = og3::kMsecInMin;
     WiFi.macAddress(og3::s_rtc.mac);
@@ -672,27 +703,26 @@ void loop() {
   // Check debug-mode again, so we can switch away from debug mode while the board is running.
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
 
-  if (og3::s_is_debug_mode || og3::s_pause_sleep) {
-    return;  // In debug mode, we don't run the stuff below which puts the board into deep sleep.
-  }
-  og3::s_rtc.code &= ~og3::Status::kDebugMode;
-
-  // This is normal operation: send a LoRa packet and then do deep sleep.
-  if (og3::s_lora.is_ok()) {
-    // Read the sensors, send a LoRa packet.
-    og3::s_packet_sender.update();
-  } else if (millis() < og3::kMsecInSec * 10) {
-    return;  // Wait for up to 10 seconds for LoRa module to initialize.
-  }
-
-  // Save filter state to memory that is preserved when sleeping.
-  if (!og3::s_moisture_filter.saveState(og3::s_rtc.filter_state)) {
-    og3::s_rtc.code |= og3::Status::kFilterSaveFailure;
+  if (!og3::s_is_debug_mode) {
+    // This is normal operation: send a LoRa packet and then do deep sleep.
+    if (og3::s_lora.is_ok()) {
+      // Read the sensors, send a LoRa packet.
+      static bool s_sent = false;
+      if (!s_sent) {
+        og3::s_packet_sender.update();
+        s_sent = true;
+      }
+    } else if (millis() < og3::kMsecInSec * 10) {
+      return;  // Wait for up to 10 seconds for LoRa module to initialize.
+    }
   }
 
-  // After we go to sleep below, set a timer which will wakeup the board in 1 minute.
-  esp_sleep_enable_timer_wakeup(og3::kSleepSecs * og3::kUsecInSec);
-
-  // Shut down peripherals here.
-  esp_deep_sleep_start();
+  if (!og3::s_pause_sleep) {
+    static bool s_sleep_started = false;
+    if (!s_sleep_started) {
+      s_sleep_started = true;
+      og3::s_app.tasks().runIn(og3::kMsecInSec * 1, og3::start_sleep);
+      og3::s_led.blink(1);
+    }
+  }
 }
