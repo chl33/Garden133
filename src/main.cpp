@@ -23,7 +23,14 @@
 
 #include "device.pb.h"
 
-#define VERSION "0.4.0"
+#define VERSION_MAJOR 0
+#define VERSION_MINOR 4
+#define VERSION_PATCH 0
+#define MAKE_VERSION(MAJOR, MINOR, PATCH) #MAJOR "." #MINOR "." #PATCH
+#define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
+
+#define HARDWARE_VERSION_MAJOR 6
+#define HARDWARE_VERSION_MINOR 0
 
 namespace og3 {
 
@@ -48,7 +55,7 @@ HAApp s_app(
     HAApp::Options(kManufacturer, kModel,
                    WifiApp::Options()
                        .withSoftwareName(kSoftware)
-                       .withDefaultDeviceName("garden133")
+                       .withDefaultDeviceName(kModel)
 #if defined(LOG_UDP) && defined(LOG_UDP_ADDRESS)
                        .withUdpLogHost(IPAddress(LOG_UDP_ADDRESS))
 
