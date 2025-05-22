@@ -17,3 +17,4 @@ secrets*.yaml
 *.kicad_sch-bak
 *.3mf
 board*.ini
+/compile_commands.json
