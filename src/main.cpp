@@ -112,7 +112,7 @@ bool s_lora_ok = false;
 bool s_is_debug_mode = false;
 bool s_pause_sleep = false;
 
-BlinkLed s_led("mode_led", kLedPin, &s_app, false);
+BlinkLed s_led("mode_led", kLedPin, &s_app, kBlinkMsec, false);
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
