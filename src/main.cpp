@@ -529,11 +529,13 @@ class PacketSender {
     }
     packet.device.id = s_board_id;
     packet.device.manufacturer = kCleeOrg;
-    SETSTR(packet.device.name, "Garden133");
-    packet.device.hardware_version.major = 6;
-    packet.device.hardware_version.minor = 0;
-    packet.device.software_version.major = 0;
-    packet.device.software_version.minor = 2;
+    SETSTR(packet.device.name, kModel);
+
+    packet.device.hardware_version.major = HARDWARE_VERSION_MAJOR;
+    packet.device.hardware_version.minor = HARDWARE_VERSION_MINOR;
+    packet.device.software_version.major = VERSION_MAJOR;
+    packet.device.software_version.minor = VERSION_MINOR;
+    packet.device.software_version.patch = VERSION_PATCH;
   }
 
   void send_packet(og3_Packet& packet, bool blink) {
