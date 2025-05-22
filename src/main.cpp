@@ -710,26 +710,45 @@ void loop() {
   // Check debug-mode again, so we can switch away from debug mode while the board is running.
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
 
-  if (!og3::s_is_debug_mode) {
-    // This is normal operation: send a LoRa packet and then do deep sleep.
-    if (og3::s_lora.is_ok()) {
-      // Read the sensors, send a LoRa packet.
-      static bool s_sent = false;
-      if (!s_sent) {
-        og3::s_packet_sender.update();
-        s_sent = true;
-      }
-    } else if (millis() < og3::kMsecInSec * 10) {
-      return;  // Wait for up to 10 seconds for LoRa module to initialize.
-    }
+  if (og3::s_is_debug_mode) {
+    return;  // In debug mode, all the work happens in og3::s_app.loop().
   }
 
-  if (!og3::s_pause_sleep) {
-    static bool s_sleep_started = false;
-    if (!s_sleep_started) {
-      s_sleep_started = true;
-      og3::s_app.tasks().runIn(og3::kMsecInSec * 1, og3::start_sleep);
-      og3::s_led.blink(1);
+  // Here, we are in "normal mode", where we normally take readings, send them via LoRa,
+  //  then go into deep sleep for a while to preserve power.
+
+  // Wait up to 10 seconds for LoRa to start-up at boot.
+  // After that, if LoRa isn't running, just sleep.
+  if (!og3::s_lora.is_ok()) {
+    if (millis() < og3::kMsecInSec * 10) {
+      return;
     }
+    og3::start_sleep();
+  }
+
+  // Here, are are in "normal mode" and the LoRa radio is running.
+
+  // Just once, read the sensors, and send a LoRa packet.
+  static bool s_sent = false;
+  if (!s_sent) {
+    og3::s_packet_sender.update();
+    s_sent = true;
+  }
+
+  // Here, we have sent a packet and may send further ones before sleeping.
+  // Wait for s_pause_sleep to be unset, meaning that all packets have been sent,
+  //  then wait for 1 second and then go to sleep.
+
+  if (og3::s_pause_sleep) {
+    return;
+  }
+
+  // Here, all packets have been sent.
+  // Schedule a sleep in 1 second if not yet started.
+  static bool s_sleep_started = false;
+  if (!s_sleep_started) {
+    s_sleep_started = true;
+    og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
+    og3::s_led.blink(1);
   }
 }
