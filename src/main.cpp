@@ -479,7 +479,7 @@ class PacketSender {
     send_packet(packet, blink);
     s_pause_sleep = more_to_send;
     if (more_to_send) {
-      s_app.tasks().runIn(kMsecInSec, [this]() { send_desc(); });
+      s_app.tasks().runIn(5 * kMsecInSec, [this]() { send_desc(); });
     }
   }
 
