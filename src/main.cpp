@@ -91,13 +91,15 @@ constexpr unsigned kFilterSaveFailure = 0x10;
 constexpr unsigned kBlinkMsec = 100;
 
 // This data should persist during deep sleep.
+// DO NOT SET INITIALIZERS ON THESE VALUES!
 RTC_DATA_ATTR struct {
-  uint16_t bootCount;
+  unsigned bootCount;
   uint16_t seq_id;
   byte mac[6];
   KernelFilter::State<kFilterSize> filter_state;
   unsigned code;
   unsigned secs_device_sent;
+  unsigned sensor_descriptions_sent;
 } s_rtc;
 
 bool s_boot = false;
@@ -235,7 +237,7 @@ KernelFilter s_moisture_filter(
     &s_app.module_system(), s_vg);
 
 int64_t total_usecs() {
-  const int64_t total_sleep_usecs = s_rtc.bootCount * kSleepSecs * kUsecInSec;
+  const int64_t total_sleep_usecs = static_cast<int64_t>(s_rtc.bootCount) * kSleepSecs * kUsecInSec;
   return esp_timer_get_time() + total_sleep_usecs;
 }
 
@@ -286,6 +288,8 @@ AdcVoltage s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nul
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
 Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
+Variable<unsigned> s_wake_secs("wake_secs", 0, units::kSeconds, nullptr, 0, s_vg);
+Variable<unsigned> s_secs_device_sent("secs device sent", 0, units::kSeconds, nullptr, 0, s_vg);
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
@@ -442,7 +446,7 @@ class PacketSender {
  public:
   PacketSender() {
     auto idx = [this]() { return m_readings.size(); };
-    m_readings.reserve(8);
+    m_readings.reserve(10);
     m_readings.emplace_back(new PacketTemperatureReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketHumidityReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketMoistureReading(idx(), s_moisture, s_moisture_filter));
@@ -451,35 +455,31 @@ class PacketSender {
     m_readings.emplace_back(new PacketVoltageReading(idx(), s_solar_sensor));
     m_readings.emplace_back(new PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
     m_readings.emplace_back(new PacketIntReading(idx(), "status", s_status_var));
+    m_readings.emplace_back(new PacketIntReading(idx(), "wake time", s_wake_secs));
+    m_readings.emplace_back(new PacketIntReading(idx(), "time device sent", s_secs_device_sent));
   }
-
-  void set_need_to_send_descs(bool send_descs) {
-    m_descs_sent = send_descs ? 0 : m_readings.size();
-  }
-
-  bool sending_desc() const { return m_descs_sent < m_readings.size(); }
 
   void send_desc() {
-    s_app.log().debugf("send_reading_i_with_desc(%u)", m_descs_sent);
-    if (!sending_desc()) {
+    s_app.log().debugf("send_reading_i_with_desc(%u)", s_rtc.sensor_descriptions_sent);
+    if (s_rtc.sensor_descriptions_sent >= m_readings.size()) {
       return;
     }
     s_pause_sleep = true;
-    auto reading = m_readings[m_descs_sent].get();
+    auto reading = m_readings[s_rtc.sensor_descriptions_sent].get();
     if (!reading->read()) {
       return;
     }
     og3_Packet packet og3_Packet_init_zero;
     start_packet(packet, true);
     reading->write(packet, true);
+    s_rtc.sensor_descriptions_sent += 1;
+    const bool more_to_send = (s_rtc.sensor_descriptions_sent < m_readings.size());
     // Don't blink if board will go to sleep immediately after sending the packet.
-    m_descs_sent += 1;
-    const bool more_to_send = sending_desc();
     const bool blink = s_is_debug_mode || more_to_send;
     send_packet(packet, blink);
     s_pause_sleep = more_to_send;
     if (more_to_send) {
-      s_app.tasks().runIn(5 * kMsecInSec, [this]() { send_desc(); });
+      s_app.tasks().runIn(kMsecInSec, [this]() { send_desc(); });
     }
   }
 
@@ -494,12 +494,18 @@ class PacketSender {
 #endif
     s_app.log().debug("PacketSender::update() preparing packet.");
     og3_Packet packet og3_Packet_init_zero;
-    start_packet(packet, false);
-    for (auto& fr : m_readings) {
-      fr->write(packet, false);
+    // When re-sending descriptions, also include device description with first packet.
+    const bool update_device = (s_rtc.sensor_descriptions_sent == 0);
+    start_packet(packet, update_device);
+    for (size_t i = 0; i < m_readings.size(); i++) {
+      const bool send_sensor_info = (s_rtc.sensor_descriptions_sent == i);
+      m_readings[i]->write(packet, send_sensor_info);
     }
     const bool blink = s_is_debug_mode;
     send_packet(packet, blink);
+    if (s_rtc.sensor_descriptions_sent < m_readings.size()) {
+      s_rtc.sensor_descriptions_sent += 1;
+    }
   }
 
   void update() {
@@ -507,15 +513,21 @@ class PacketSender {
     const int64_t now_secs = now_usecs / kUsecInSec;
     const int64_t secs_since_info_sent = now_secs - s_rtc.secs_device_sent;
     s_app.log().debugf("now_secs:%llu secs_since_info_sent:%llu", now_secs, secs_since_info_sent);
-    s_status_var = og3::s_rtc.code;
-    s_board_id_var = og3::s_board_id;
 
-    if (s_boot || secs_since_info_sent >= 3600) {
+    const bool need_to_send_info = s_boot || (secs_since_info_sent >= 3600);
+    if (need_to_send_info) {
       s_rtc.secs_device_sent = now_secs;
-      set_need_to_send_descs(true);
+      s_rtc.sensor_descriptions_sent = 0;
+    }
+    s_status_var = s_rtc.code;
+    s_board_id_var = s_board_id;
+    s_wake_secs = now_secs;
+    s_secs_device_sent = s_rtc.secs_device_sent;
+
+    if (s_boot) {
+      // At boot, for each sensor send one packet describing the sensor.
       send_desc();
     } else {
-      set_need_to_send_descs(false);
       send_all_readings();
     }
   }
@@ -571,7 +583,6 @@ class PacketSender {
   }
 
   std::vector<std::unique_ptr<PacketReading>> m_readings;
-  unsigned m_descs_sent = 0;
 };
 
 PacketSender s_packet_sender;
