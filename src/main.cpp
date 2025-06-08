@@ -4,7 +4,9 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <LoRa.h>
+#include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
+#include <og3/config_module.h>
 #include <og3/constants.h>
 #include <og3/dependencies.h>
 #include <og3/ha_app.h>
@@ -13,6 +15,7 @@
 #include <og3/lora.h>
 #include <og3/mapped_analog_sensor.h>
 #include <og3/packet_writer.h>
+#include <og3/satellite.h>
 #include <og3/shtc3.h>
 #include <og3/tasks.h>
 #include <og3/units.h>
@@ -21,16 +24,34 @@
 #include <memory>
 #include <vector>
 
-#include "device.pb.h"
-
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 4
+#define VERSION_MINOR 5
 #define VERSION_PATCH 0
-#define MAKE_VERSION(MAJOR, MINOR, PATCH) #MAJOR "." #MINOR "." #PATCH
+#define STR(X) #X
+#define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
 #define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
 
 #define HARDWARE_VERSION_MAJOR 6
 #define HARDWARE_VERSION_MINOR 0
+
+// TODO
+//
+// Use interrupt on tx-finished to sleep, etc...
+// Sleep from wake time, to keep wake time more predictable.
+//
+// I think right now my packets are around 80 bytes long, which with my selected
+//  spreading factor leads to 2.4 sec transmittion.
+// The FCC says "dwell time" on a single frequency should be 400msec, so I
+//  need to break things up.
+// "Packets can contain up to 255 bytes."
+
+// LoRa stuff to set:
+//  void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
+// x void setFrequency(long frequency);
+// x void setSpreadingFactor(int sf);
+// x void setSignalBandwidth(long sbw);
+//  Should probably be calling this after transmitting to save power:
+//    LoRa.sleep();
 
 namespace og3 {
 
@@ -41,6 +62,8 @@ static const char kSoftware[] = "Garden133 v" VERSION;
 constexpr App::LogType kLogType = LOG_METHOD;
 constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
+
+constexpr size_t kLoraPacketSize = 255;
 
 uint16_t s_board_id = 0xFF;
 
@@ -57,6 +80,7 @@ HAApp s_app(
                        .withApp(App::Options().withLogType(kLogType).withReserveTasks(64))));
 
 VariableGroup s_vg("garden");
+VariableGroup s_cvg("garden_config");
 
 static const char kTemperature[] = "temperature";
 static const char kHumidity[] = "humidity";
@@ -94,33 +118,46 @@ constexpr unsigned kBlinkMsec = 100;
 // DO NOT SET INITIALIZERS ON THESE VALUES!
 RTC_DATA_ATTR struct {
   unsigned bootCount;
-  uint16_t seq_id;
   byte mac[6];
   KernelFilter::State<kFilterSize> filter_state;
   unsigned code;
-  unsigned secs_device_sent;
-  unsigned sensor_descriptions_sent;
+  satellite::PacketSender::Rtc packet_sender;
 } s_rtc;
 
 bool s_boot = false;
 bool s_lora_ok = false;
 bool s_is_debug_mode = false;
-bool s_pause_sleep = false;
 
 BlinkLed s_led("mode_led", kLedPin, &s_app, kBlinkMsec, false);
 
 Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_vg);
 
-void _on_lora_initialized() {
-  LoRa.setSpreadingFactor(12);
-  // Change sync word (0xF3) to match the receiver
-  // The sync word assures you don't get LoRa messages from other LoRa transceivers
-  // ranges from 0-0xFF
-  LoRa.setSyncWord(0xF3);
-  LoRa.enableCrc();
-}
+// To get to 1% radio utilization, should transmit every 4 minutes maximum.
+// Assuming a 86 byte packet.
+// 86 bytes / (288 bits/s / 8 bits/byte) = 2.4 seconds to transmit
+// So cannot transmit more often than everty (100 * 2.4 seconds) / (60 sec / min) = 4 minutes
 
-LoRaModule s_lora("lora", LoRaModule::Options(), &s_app, s_vg, _on_lora_initialized);
+auto s_lora_options = []() -> LoRaModule::Options {
+  LoRaModule::Options opts;
+  opts.sync_word = 0xF0;
+  opts.enable_crc = true;
+  // opts.on_transmit_done = []() { s_led.off(); };
+
+  opts.frequency = lora::Frequency::k915MHz;
+  opts.spreading_factor = lora::SpreadingFactor::kSF8;
+  opts.signal_bandwidth = lora::SignalBandwidth::k125kHz;
+
+  const auto opt_select = static_cast<LoRaModule::OptionSelect>(LoRaModule::kOptionSyncWord |
+                                                                LoRaModule::kOptionSpreadingFactor |
+                                                                LoRaModule::kOptionSignalBandwidth);
+  opts.config_options = opt_select;
+  opts.settable_options = opt_select;
+
+  return opts;
+};
+
+VariableGroup s_lora_vg("lora");
+LoRaModule s_lora(s_lora_options(), &s_app, s_lora_vg, nullptr);
 
 template <typename T>
 void copy(T& dest, const T& src) {
@@ -138,52 +175,10 @@ void add_html_button(String* body, const char* title, const char* url) {
 // Global variable for html, so asyncwebserver can send data in the background (single client)
 String s_html;
 
-class ConfigModule : public Module {
- public:
-  explicit ConfigModule(const char* name)
-      : Module(name, &s_app.module_system()),
-        m_deps(ConfigInterface::kName),
-        m_cvg(name),
-        m_cfg_url(String("/config/") + name) {
-    setDependencies(&m_deps);
-    add_link_fn([this](og3::NameToModule& name_to_module) -> bool {
-      m_config = ConfigInterface::get(name_to_module);
-      return true;
-    });
-    add_init_fn([this]() {
-      if (m_config) {
-        m_config->read_config(m_cvg);
-      }
-      s_app.web_server().on(cfg_url(), [this](AsyncWebServerRequest* request) {
-        this->handleConfigRequest(request);
-      });
-    });
-  }
-
-  const char* cfg_url() const { return m_cfg_url.c_str(); }
-  void add_html_button(String* body) const { Module::add_html_button(body, name(), cfg_url()); }
-
- protected:
-  SingleDependency m_deps;
-  VariableGroup m_cvg;
-  ConfigInterface* m_config = nullptr;
-  String m_cfg_url;
-
- private:
-  void handleConfigRequest(AsyncWebServerRequest* request) {
-    ::og3::read(*request, m_cvg);
-    s_html.clear();
-    html::writeFormTableInto(&s_html, m_cvg);
-    Module::add_html_button(&s_html, "Back", "/");
-    sendWrappedHTML(request, s_app.board_cname(), name(), s_html.c_str());
-    s_app.config().write_config(m_cvg);
-  }
-};
-
 class MoistureSensor : public ConfigModule {
  public:
   MoistureSensor()
-      : ConfigModule("moisture"),
+      : ConfigModule("moisture", &s_app),
         m_mapped_adc(
             {
                 .name = "soil moisture",
@@ -241,50 +236,14 @@ int64_t total_usecs() {
   return esp_timer_get_time() + total_sleep_usecs;
 }
 
-class AdcVoltage : public ConfigModule {
-  // voltage divider with 10k, 20k(mez) R.
- public:
-  AdcVoltage(const char* name, uint8_t pin, const char* raw_desc, const char* desc, float out_max)
-      : ConfigModule(name),
-        m_mapped_adc(
-            {
-                .name = name,
-                .pin = pin,
-                .units = units::kVolt,
-                .raw_description = raw_desc,
-                .description = desc,
-                .raw_var_flags = 0,
-                .mapped_var_flags = 0,
-                .config_flags = kCfgSet,
-                .default_in_min = 0,
-                .default_in_max = 1 << 12,
-                .default_out_min = 0.0f,
-                .default_out_max = out_max,
-                .config_decimals = 2,
-                .decimals = 2,
-                .valid_in_min = 50,
-                .valid_in_max = 1 << 12,
-            },
-            &s_app.module_system(), m_cvg, s_vg) {}
+AdcVoltage s_five_v_sensor("fivev voltage", &s_app, kFiveVPin, "fivev raw value",
+                           "voltage from battery or solar", 3.3 * 2, s_vg, s_cvg);
 
-  float read() { return m_mapped_adc.read(); }
-  float value() const { return m_mapped_adc.value(); }
-  const FloatVariable& valueVariable() const { return m_mapped_adc.mapped_value(); }
-  int raw_counts() const { return m_mapped_adc.raw_counts(); }
+AdcVoltage s_battery_sensor("battery voltage", &s_app, kBatteryPin, "battery raw value", nullptr,
+                            3.3 * 32.0 / 22.0, s_vg, s_cvg);
 
- private:
-  static constexpr unsigned kCfgSet = VariableBase::Flags::kConfig | VariableBase::Flags::kSettable;
-
-  MappedAnalogSensor m_mapped_adc;
-};
-
-AdcVoltage s_five_v_sensor("fivev voltage", kFiveVPin, "fivev raw value",
-                           "voltage from battery or solar", 3.3 * 2);
-
-AdcVoltage s_battery_sensor("battery voltage", kBatteryPin, "battery raw value", nullptr,
-                            3.3 * 32.0 / 22.0);
-
-AdcVoltage s_solar_sensor("solar voltage", kSolarPlusPin, "solar raw value", nullptr, 3.3 * 2);
+AdcVoltage s_solar_sensor("solar voltage", &s_app, kSolarPlusPin, "solar raw value", nullptr,
+                          3.3 * 2, s_vg, s_cvg);
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
 Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
@@ -293,44 +252,7 @@ Variable<unsigned> s_secs_device_sent("secs device sent", 0, units::kSeconds, nu
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
-class PacketReading {
- public:
-  PacketReading(unsigned sensor_id, og3_Sensor_Type sensor_type)
-      : m_sensor_id(sensor_id), m_sensor_type(sensor_type) {}
-
-  virtual bool read() = 0;
-  virtual bool write(og3_Packet& packet, bool include_info) = 0;
-
- protected:
-  const unsigned m_sensor_id;
-  const og3_Sensor_Type m_sensor_type;
-};
-
-class PacketFloatReading : public PacketReading {
- public:
-  PacketFloatReading(unsigned sensor_id, og3_Sensor_Type sensor_type, const FloatVariable& var)
-      : PacketReading(sensor_id, sensor_type), m_var(var) {}
-
-  bool write(og3_Packet& packet, bool include_info) override {
-    auto& reading = packet.reading[packet.reading_count];
-    reading.sensor_id = m_sensor_id;
-    reading.has_sensor = include_info;
-    reading.value = m_var.value();
-    if (include_info) {
-      reading.sensor.id = m_sensor_id;
-      SETSTR(reading.sensor.name, m_var.name());
-      SETSTR(reading.sensor.units, m_var.units());
-      reading.sensor.type = m_sensor_type;
-    }
-    packet.reading_count += 1;
-    return true;
-  }
-
- private:
-  const FloatVariable& m_var;
-};
-
-class PacketTemperatureReading : public PacketFloatReading {
+class PacketTemperatureReading : public satellite::PacketFloatReading {
  public:
   PacketTemperatureReading(unsigned sensor_id, Shtc3& shtc3)
       : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_TEMPERATURE, shtc3.temperatureVar()),
@@ -340,15 +262,13 @@ class PacketTemperatureReading : public PacketFloatReading {
     m_shtc3.read();
     return m_shtc3.ok();
   }
-  bool write(og3_Packet& packet, bool include_info) final {
-    return PacketFloatReading::write(packet, include_info);
-  }
+  bool write(og3_Packet& packet) final { return PacketFloatReading::write(packet); }
 
  private:
   Shtc3& m_shtc3;
 };
 
-class PacketHumidityReading : public PacketFloatReading {
+class PacketHumidityReading : public satellite::PacketFloatReading {
  public:
   PacketHumidityReading(unsigned sensor_id, Shtc3& shtc3)
       : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_HUMIDITY, shtc3.humidityVar()),
@@ -358,33 +278,18 @@ class PacketHumidityReading : public PacketFloatReading {
     // Assume read() happened in PacketTemperatureReading
     return m_shtc3.ok();
   }
-  bool write(og3_Packet& packet, bool include_info) final {
+  bool write(og3_Packet& packet) final {
     if (!m_shtc3.ok()) {
       return false;
     }
-    return PacketFloatReading::write(packet, include_info);
+    return PacketFloatReading::write(packet);
   }
 
  private:
   Shtc3& m_shtc3;
 };
 
-class PacketVoltageReading : public PacketFloatReading {
- public:
-  PacketVoltageReading(unsigned sensor_id, AdcVoltage& adc)
-      : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_VOLTAGE, adc.valueVariable()),
-        m_adc(adc) {}
-
-  bool read() final {
-    m_adc.read();
-    return true;
-  }
-
- private:
-  AdcVoltage& m_adc;
-};
-
-class PacketMoistureReading : public PacketFloatReading {
+class PacketMoistureReading : public satellite::PacketFloatReading {
  public:
   static constexpr float kMinVForValidReading = 3.2f;
 
@@ -404,11 +309,11 @@ class PacketMoistureReading : public PacketFloatReading {
     m_moisture_filter.addSample(now_usecs * 1e-6, m_moisture.read());
     return true;
   }
-  bool write(og3_Packet& packet, bool include_info) final {
+  bool write(og3_Packet& packet) final {
     if (!m_is_ok) {
       return false;
     }
-    return PacketFloatReading::write(packet, include_info);
+    return PacketFloatReading::write(packet);
   }
 
  private:
@@ -417,141 +322,61 @@ class PacketMoistureReading : public PacketFloatReading {
   bool m_is_ok = false;
 };
 
-class PacketIntReading : public PacketReading {
+class LoraPacketSender : public satellite::PacketSender {
  public:
-  PacketIntReading(unsigned sensor_id, const char* desc, Variable<unsigned>& ivar)
-      : PacketReading(sensor_id, og3_Sensor_Type_TYPE_UNSPECIFIED), m_desc(desc), m_ivar(ivar) {}
-
-  bool read() override { return true; }
-  bool write(og3_Packet& packet, bool include_info) override {
-    auto& reading = packet.i_reading[packet.i_reading_count];
-    reading.sensor_id = m_sensor_id;
-    reading.has_sensor = include_info;
-    reading.value = m_ivar.value();
-    if (include_info) {
-      reading.sensor.id = m_sensor_id;
-      SETSTR(reading.sensor.name, m_desc);
-      reading.sensor.type = m_sensor_type;
-    }
-    packet.i_reading_count += 1;
-    return true;
-  }
-
- private:
-  const char* m_desc;
-  Variable<unsigned>& m_ivar;
-};
-
-class PacketSender {
- public:
-  PacketSender() {
+  LoraPacketSender(const og3_Device* device, og3::App* app, og3::satellite::PacketSender::Rtc* rtc)
+      : satellite::PacketSender(device, app, rtc) {
     auto idx = [this]() { return m_readings.size(); };
     m_readings.reserve(10);
     m_readings.emplace_back(new PacketTemperatureReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketHumidityReading(idx(), s_shtc3));
     m_readings.emplace_back(new PacketMoistureReading(idx(), s_moisture, s_moisture_filter));
-    m_readings.emplace_back(new PacketVoltageReading(idx(), s_five_v_sensor));
-    m_readings.emplace_back(new PacketVoltageReading(idx(), s_battery_sensor));
-    m_readings.emplace_back(new PacketVoltageReading(idx(), s_solar_sensor));
-    m_readings.emplace_back(new PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
-    m_readings.emplace_back(new PacketIntReading(idx(), "status", s_status_var));
-    m_readings.emplace_back(new PacketIntReading(idx(), "wake time", s_wake_secs));
-    m_readings.emplace_back(new PacketIntReading(idx(), "time device sent", s_secs_device_sent));
-  }
-
-  void send_desc() {
-    s_app.log().debugf("send_reading_i_with_desc(%u)", s_rtc.sensor_descriptions_sent);
-    if (s_rtc.sensor_descriptions_sent >= m_readings.size()) {
-      return;
-    }
-    s_pause_sleep = true;
-    auto reading = m_readings[s_rtc.sensor_descriptions_sent].get();
-    if (!reading->read()) {
-      return;
-    }
-    og3_Packet packet og3_Packet_init_zero;
-    start_packet(packet, true);
-    reading->write(packet, true);
-    s_rtc.sensor_descriptions_sent += 1;
-    const bool more_to_send = (s_rtc.sensor_descriptions_sent < m_readings.size());
-    // Don't blink if board will go to sleep immediately after sending the packet.
-    const bool blink = s_is_debug_mode || more_to_send;
-    send_packet(packet, blink);
-    s_pause_sleep = more_to_send;
-    if (more_to_send) {
-      s_app.tasks().runIn(kMsecInSec, [this]() { send_desc(); });
-    }
-  }
-
-  void send_all_readings() {
-    for (auto& fr : m_readings) {
-      fr->read();
-    }
+    m_readings.emplace_back(new satellite::PacketVoltageReading(idx(), s_five_v_sensor));
+    m_readings.emplace_back(new satellite::PacketVoltageReading(idx(), s_battery_sensor));
+    m_readings.emplace_back(new satellite::PacketVoltageReading(idx(), s_solar_sensor));
+    m_readings.emplace_back(
+        new satellite::PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
+    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "status", s_status_var));
 #if 0
-    if (s_is_debug_mode) {
-      s_app.mqttSend(s_vg);
-    }
+    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "wake time", s_wake_secs));
+    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "time device sent", s_secs_device_sent));
 #endif
-    s_app.log().debug("PacketSender::update() preparing packet.");
-    og3_Packet packet og3_Packet_init_zero;
-    // When re-sending descriptions, also include device description with first packet.
-    const bool update_device = (s_rtc.sensor_descriptions_sent == 0);
-    start_packet(packet, update_device);
-    for (size_t i = 0; i < m_readings.size(); i++) {
-      const bool send_sensor_info = (s_rtc.sensor_descriptions_sent == i);
-      m_readings[i]->write(packet, send_sensor_info);
-    }
-    const bool blink = s_is_debug_mode;
-    send_packet(packet, blink);
-    if (s_rtc.sensor_descriptions_sent < m_readings.size()) {
-      s_rtc.sensor_descriptions_sent += 1;
-    }
   }
 
   void update() {
     const int64_t now_usecs = total_usecs();
     const int64_t now_secs = now_usecs / kUsecInSec;
-    const int64_t secs_since_info_sent = now_secs - s_rtc.secs_device_sent;
+    const int64_t secs_since_info_sent = now_secs - m_rtc->secs_device_sent;
     s_app.log().debugf("now_secs:%llu secs_since_info_sent:%llu", now_secs, secs_since_info_sent);
 
     const bool need_to_send_info = s_boot || (secs_since_info_sent >= 3600);
     if (need_to_send_info) {
-      s_rtc.secs_device_sent = now_secs;
-      s_rtc.sensor_descriptions_sent = 0;
+      m_rtc->secs_device_sent = now_secs;
+      m_rtc->sensor_descriptions_sent = 0;
     }
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
     s_wake_secs = now_secs;
-    s_secs_device_sent = s_rtc.secs_device_sent;
+    s_secs_device_sent = m_rtc->secs_device_sent;
 
     if (s_boot) {
       // At boot, for each sensor send one packet describing the sensor.
-      send_desc();
+      const int max_packet = s_lora.usa_max_payload();
+      constexpr int packet_overhead = pkt::kHeaderSize + pkt::kMsgHeaderSize + sizeof(uint32_t);
+      const int max_payload = max_packet - packet_overhead;
+      if (max_payload < 8) {
+        s_app.log().logf("Max packet %d - overhead %d is too small", max_packet, packet_overhead);
+        return;
+      }
+      send_desc(max_payload);
     } else {
       send_all_readings();
     }
   }
 
  protected:
-  void start_packet(og3_Packet& packet, bool update_device) {
-    packet.device_id = s_board_id;
-    packet.has_device = update_device;
-    if (!update_device) {
-      return;
-    }
-    packet.device.id = s_board_id;
-    packet.device.manufacturer = kCleeOrg;
-    SETSTR(packet.device.name, kModel);
-
-    packet.device.hardware_version.major = HARDWARE_VERSION_MAJOR;
-    packet.device.hardware_version.minor = HARDWARE_VERSION_MINOR;
-    packet.device.software_version.major = VERSION_MAJOR;
-    packet.device.software_version.minor = VERSION_MINOR;
-    packet.device.software_version.patch = VERSION_PATCH;
-  }
-
-  void send_packet(og3_Packet& packet, bool blink) {
-    uint8_t msg_buffer[og3_Packet_size];
+  void send_packet(og3_Packet& packet) override {
+    uint8_t msg_buffer[kLoraPacketSize];
     pb_ostream_t ostream = pb_ostream_from_buffer(msg_buffer, sizeof(msg_buffer));
     if (!pb_encode(&ostream, &og3_Packet_msg, &packet)) {
       s_app.log().log("Failed to pb_encode packet.");
@@ -559,7 +384,7 @@ class PacketSender {
     }
 
     uint8_t pkt_buffer[og3_Packet_size + pkt::kHeaderSize + pkt::kMsgHeaderSize];
-    pkt::PacketWriter writer(pkt_buffer, sizeof(pkt_buffer), s_rtc.seq_id++);
+    pkt::PacketWriter writer(pkt_buffer, sizeof(pkt_buffer), m_rtc->seq_id++);
     if (!writer.add_message(kDevicePktType, msg_buffer, ostream.bytes_written)) {
       s_app.log().log("Failed to add device msg to packet.");
       return;
@@ -569,23 +394,28 @@ class PacketSender {
       return;
     }
 
-    // Disable on new board until different MAC is detected.
-    LoRa.beginPacket();
-    LoRa.write(pkt_buffer, writer.packet_size());
-    LoRa.endPacket();
-
-    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", s_rtc.seq_id - 1,
+    // s_led.on();
+    s_lora.send_packet(pkt_buffer, writer.packet_size());
+    s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_rtc->seq_id - 1,
                        ostream.bytes_written);
-
-    if (blink) {
-      s_led.blink();
-    }
   }
-
-  std::vector<std::unique_ptr<PacketReading>> m_readings;
 };
 
-PacketSender s_packet_sender;
+og3_Device* s_device() {
+  static og3_Device ret;
+
+  ret.id = s_board_id;  // may not be set yet
+  ret.manufacturer = kCleeOrg;
+  SETSTR(ret.name, kModel);
+  ret.hardware_version.major = HARDWARE_VERSION_MAJOR;
+  ret.hardware_version.minor = HARDWARE_VERSION_MINOR;
+  ret.software_version.major = VERSION_MAJOR;
+  ret.software_version.minor = VERSION_MINOR;
+  ret.software_version.patch = VERSION_PATCH;
+  return &ret;
+}
+
+LoraPacketSender s_packet_sender(s_device(), &s_app, &s_rtc.packet_sender);
 
 std::unique_ptr<PeriodicTaskScheduler> s_hourly_lora;
 
@@ -634,11 +464,21 @@ void handleWebRoot(AsyncWebServerRequest* request) {
   s_battery_sensor.add_html_button(&s_html);
   s_solar_sensor.add_html_button(&s_html);
 
+  s_html += HTML_BUTTON("/lora", "LoRa");
   s_button_wifi_config.add_button(&s_html);
   s_button_mqtt_config.add_button(&s_html);
   s_button_app_status.add_button(&s_html);
   s_button_restart.add_button(&s_html);
   sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+}
+
+void handleLoraConfig(AsyncWebServerRequest* request) {
+  ::og3::read(*request, s_lora_vg);
+  s_html.clear();
+  html::writeFormTableInto(&s_html, s_lora_vg);
+  s_html += HTML_BUTTON("/", "Back");
+  sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+  s_app.config().write_config(s_lora_vg);
 }
 
 void start_sleep() {
@@ -649,6 +489,9 @@ void start_sleep() {
   if (!s_moisture_filter.saveState(s_rtc.filter_state)) {
     s_rtc.code |= Status::kFilterSaveFailure;
   }
+
+  // Put the radio to sleep to save power.
+  LoRa.sleep();
 
   // After we go to sleep below, set a timer which will wakeup the board in 1 minute.
   esp_sleep_enable_timer_wakeup(kSleepSecs * kUsecInSec);
@@ -680,7 +523,7 @@ void setup() {
       WiFi.macAddress(og3::s_rtc.mac);
       og3::s_rtc.code |= og3::Status::kPowerOn;
       og3::s_app.log().debug("First wake, pausing sleep");
-      og3::s_pause_sleep = true;
+      og3::s_packet_sender.set_is_sending(true);
     } else {
       // Normal operation, woke from deep sleep.
       og3::s_boot = false;
@@ -705,8 +548,10 @@ void setup() {
   }
   // Constuct a board ID from the MAC address.
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
+  og3::s_packet_sender.set_board_id(og3::s_board_id);
 
   og3::s_app.web_server().on("/", og3::handleWebRoot);
+  og3::s_app.web_server().on("/lora", og3::handleLoraConfig);
   og3::s_app.setup();
 }
 
@@ -742,10 +587,10 @@ void loop() {
   }
 
   // Here, we have sent a packet and may send further ones before sleeping.
-  // Wait for s_pause_sleep to be unset, meaning that all packets have been sent,
+  // Wait for is_sending() to be unset, meaning that all packets have been sent,
   //  then wait for 1 second and then go to sleep.
 
-  if (og3::s_pause_sleep) {
+  if (og3::s_packet_sender.is_sending()) {
     return;
   }
 
