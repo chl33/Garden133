@@ -35,23 +35,8 @@
 #define HARDWARE_VERSION_MINOR 0
 
 // TODO
-//
-// Use interrupt on tx-finished to sleep, etc...
-// Sleep from wake time, to keep wake time more predictable.
-//
-// I think right now my packets are around 80 bytes long, which with my selected
-//  spreading factor leads to 2.4 sec transmittion.
-// The FCC says "dwell time" on a single frequency should be 400msec, so I
-//  need to break things up.
-// "Packets can contain up to 255 bytes."
-
-// LoRa stuff to set:
-//  void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
-// x void setFrequency(long frequency);
-// x void setSpreadingFactor(int sf);
-// x void setSignalBandwidth(long sbw);
-//  Should probably be calling this after transmitting to save power:
-//    LoRa.sleep();
+// - Use interrupt on tx-finished to sleep (didn't work so far).
+// - LoRa.setTxPower(int level); (??)
 
 namespace og3 {
 
@@ -98,8 +83,8 @@ constexpr int kSolarPlusPin = 35;  // ADC1_CH7
 constexpr int kDebugSwitchPin = 04;
 constexpr int kLedPin = 16;
 
-// Sleep for 1 minute between readings (for now).
-constexpr unsigned kSleepSecs = kSecInMin;
+// Default sleep for 5 minute between readings (for now).
+constexpr unsigned kDefaultSleepMin = 5;
 
 // Number of samples to store for the moisture filter.
 constexpr unsigned kFilterSize = 32;
@@ -122,6 +107,8 @@ RTC_DATA_ATTR struct {
   KernelFilter::State<kFilterSize> filter_state;
   unsigned code;
   satellite::PacketSender::Rtc packet_sender;
+  unsigned last_wake_secs;
+  unsigned expected_wake_secs;
 } s_rtc;
 
 bool s_boot = false;
@@ -158,6 +145,10 @@ auto s_lora_options = []() -> LoRaModule::Options {
 
 VariableGroup s_lora_vg("lora");
 LoRaModule s_lora(s_lora_options(), &s_app, s_lora_vg, nullptr);
+
+Variable<unsigned> s_sleep_min("sleep_min", kDefaultSleepMin, "min" /*update when added to og3*/,
+                               "sleep min", VariableBase::kSettable | VariableBase::kConfig,
+                               s_lora_vg);
 
 template <typename T>
 void copy(T& dest, const T& src) {
@@ -232,8 +223,8 @@ KernelFilter s_moisture_filter(
     &s_app.module_system(), s_vg);
 
 int64_t total_usecs() {
-  const int64_t total_sleep_usecs = static_cast<int64_t>(s_rtc.bootCount) * kSleepSecs * kUsecInSec;
-  return esp_timer_get_time() + total_sleep_usecs;
+  const int64_t wake_sleep_usecs = static_cast<int64_t>(s_rtc.expected_wake_secs * kUsecInSec);
+  return esp_timer_get_time() + wake_sleep_usecs;
 }
 
 AdcVoltage s_five_v_sensor("fivev voltage", &s_app, kFiveVPin, "fivev raw value",
@@ -247,7 +238,8 @@ AdcVoltage s_solar_sensor("solar voltage", &s_app, kSolarPlusPin, "solar raw val
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
 Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
-Variable<unsigned> s_wake_secs("wake_secs", 0, units::kSeconds, nullptr, 0, s_vg);
+Variable<unsigned> s_wake_secs("wake_secs", s_rtc.expected_wake_secs, units::kSeconds, nullptr, 0,
+                               s_vg);
 Variable<unsigned> s_secs_device_sent("secs device sent", 0, units::kSeconds, nullptr, 0, s_vg);
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
@@ -356,7 +348,6 @@ class LoraPacketSender : public satellite::PacketSender {
     }
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
-    s_wake_secs = now_secs;
     s_secs_device_sent = m_rtc->secs_device_sent;
 
     if (s_boot) {
@@ -490,13 +481,17 @@ void start_sleep() {
     s_rtc.code |= Status::kFilterSaveFailure;
   }
 
-  // Put the radio to sleep to save power.
+  // After we go to sleep below, set a timer which will wakeup the board.
+  // We set the wakeup time from the previous wakeup time to keep the interval regular.
+  s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
+  const int64_t next_wake_secs = s_rtc.last_wake_secs + kSecInMin * s_sleep_min.value();
+  const int64_t wake_usec = next_wake_secs * kUsecInSec;
+  const int64_t sleep_usec = wake_usec - total_usecs();
+  // We have to set this after the call to total_usecs() because that call uses this value.
+  s_rtc.expected_wake_secs = next_wake_secs;
+  esp_sleep_enable_timer_wakeup(sleep_usec);
+
   LoRa.sleep();
-
-  // After we go to sleep below, set a timer which will wakeup the board in 1 minute.
-  esp_sleep_enable_timer_wakeup(kSleepSecs * kUsecInSec);
-
-  // Shut down peripherals here.
   esp_deep_sleep_start();
 }
 
