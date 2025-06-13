@@ -4899,7 +4899,7 @@
 				)
 			)
 		)
-		(property "Value" "SS14"
+		(property "Value" "UPS115UE3/TR7"
 			(at 105.7275 35.56 0)
 			(effects
 				(font
@@ -4907,7 +4907,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Diode_SMD:D_2010_5025Metric"
+		(property "Footprint" "chl33_library:DO-216"
 			(at 105.41 34.925 0)
 			(effects
 				(font
