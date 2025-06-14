@@ -240,7 +240,8 @@ Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
 Variable<unsigned> s_board_id_var("board id", 0, nullptr, nullptr, 0, s_vg);
 Variable<unsigned> s_wake_secs("wake_secs", s_rtc.expected_wake_secs, units::kSeconds, nullptr, 0,
                                s_vg);
-Variable<unsigned> s_secs_device_sent("secs device sent", 0, units::kSeconds, nullptr, 0, s_vg);
+Variable<unsigned> s_last_wake_secs("last_wake_secs", s_rtc.last_wake_secs, units::kSeconds,
+                                    nullptr, 0, s_vg);
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
@@ -348,7 +349,6 @@ class LoraPacketSender : public satellite::PacketSender {
     }
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
-    s_secs_device_sent = m_rtc->secs_device_sent;
 
     if (s_boot) {
       // At boot, for each sensor send one packet describing the sensor.
@@ -481,17 +481,14 @@ void start_sleep() {
     s_rtc.code |= Status::kFilterSaveFailure;
   }
 
-  // After we go to sleep below, set a timer which will wakeup the board.
-  // We set the wakeup time from the previous wakeup time to keep the interval regular.
-  s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
-  const int64_t next_wake_secs = s_rtc.last_wake_secs + kSecInMin * s_sleep_min.value();
-  const int64_t wake_usec = next_wake_secs * kUsecInSec;
-  const int64_t sleep_usec = wake_usec - total_usecs();
-  // We have to set this after the call to total_usecs() because that call uses this value.
-  s_rtc.expected_wake_secs = next_wake_secs;
-  esp_sleep_enable_timer_wakeup(sleep_usec);
-
   LoRa.sleep();
+
+  // Set a timer which will wakeup the board, then put the board into deep sleep.
+  s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
+  s_rtc.expected_wake_secs = s_rtc.last_wake_secs + kSecInMin * s_sleep_min.value();
+
+  esp_sleep_enable_timer_wakeup((kSecInMin * s_sleep_min.value()) * kUsecInSec -
+                                esp_timer_get_time());
   esp_deep_sleep_start();
 }
 
