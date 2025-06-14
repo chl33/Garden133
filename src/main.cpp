@@ -146,9 +146,8 @@ auto s_lora_options = []() -> LoRaModule::Options {
 VariableGroup s_lora_vg("lora");
 LoRaModule s_lora(s_lora_options(), &s_app, s_lora_vg, nullptr);
 
-Variable<unsigned> s_sleep_min("sleep_min", kDefaultSleepMin, "min" /*update when added to og3*/,
-                               "sleep min", VariableBase::kSettable | VariableBase::kConfig,
-                               s_lora_vg);
+Variable<unsigned> s_sleep_min("sleep_min", kDefaultSleepMin, units::kMinutes, "sleep min",
+                               VariableBase::kSettable | VariableBase::kConfig, s_lora_vg);
 
 template <typename T>
 void copy(T& dest, const T& src) {
@@ -288,7 +287,8 @@ class PacketMoistureReading : public satellite::PacketFloatReading {
 
   PacketMoistureReading(unsigned sensor_id, MoistureSensor& moisture, KernelFilter& moisture_filter)
       : PacketFloatReading(sensor_id, og3_Sensor_Type_TYPE_MOISTURE,
-                           moisture_filter.valueVariable()),
+                           moisture_filter.valueVariable(),
+                           og3_Sensor_StateClass_STATE_CLASS_MEASUREMENT),
         m_moisture(moisture),
         m_moisture_filter(moisture_filter) {}
 
