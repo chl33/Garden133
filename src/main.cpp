@@ -330,10 +330,9 @@ class LoraPacketSender : public satellite::PacketSender {
     m_readings.emplace_back(
         new satellite::PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
     m_readings.emplace_back(new satellite::PacketIntReading(idx(), "status", s_status_var));
-#if 0
     m_readings.emplace_back(new satellite::PacketIntReading(idx(), "wake time", s_wake_secs));
-    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "time device sent", s_secs_device_sent));
-#endif
+    m_readings.emplace_back(
+        new satellite::PacketIntReading(idx(), "last wake time", s_last_wake_secs));
   }
 
   void update() {
