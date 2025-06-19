@@ -4745,7 +4745,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "d6199e82-223b-4761-b301-0ad109dc2950")
-		(property "Reference" "Ru8"
+		(property "Reference" "R2u8"
 			(at 52.07 36.83 90)
 			(effects
 				(font
@@ -4797,7 +4797,7 @@
 		(instances
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/68ad4c29-b646-4e97-9a96-445ccffd346c"
-					(reference "Ru8")
+					(reference "R2u8")
 					(unit 1)
 				)
 			)
