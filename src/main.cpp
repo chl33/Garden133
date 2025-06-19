@@ -9,6 +9,7 @@
 #include <og3/config_module.h>
 #include <og3/constants.h>
 #include <og3/dependencies.h>
+#include <og3/din.h>
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
 #include <og3/kernel_filter.h>
@@ -31,8 +32,9 @@
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
 #define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
 
-#define HARDWARE_VERSION_MAJOR 6
-#define HARDWARE_VERSION_MINOR 0
+#if HARDWARE_VERSION_MAJOR > 5
+#define HAVE_STANDBY_INPUT
+#endif
 
 // TODO
 // - Use interrupt on tx-finished to sleep (didn't work so far).
@@ -82,6 +84,10 @@ constexpr int kMoisturePin = 34;   // ADC1_CH6
 constexpr int kSolarPlusPin = 35;  // ADC1_CH7
 constexpr int kDebugSwitchPin = 04;
 constexpr int kLedPin = 16;
+#if defined(HAVE_STANDBY_INPUT)
+constexpr int kChrgPin = 27;
+constexpr int kStbyPin = 28;
+#endif
 
 // Default sleep for 5 minute between readings (for now).
 constexpr unsigned kDefaultSleepMin = 5;
@@ -222,7 +228,7 @@ KernelFilter s_moisture_filter(
     &s_app.module_system(), s_vg);
 
 int64_t total_usecs() {
-  const int64_t wake_sleep_usecs = static_cast<int64_t>(s_rtc.expected_wake_secs * kUsecInSec);
+  const int64_t wake_sleep_usecs = static_cast<int64_t>(s_rtc.expected_wake_secs) * kUsecInSec;
   return esp_timer_get_time() + wake_sleep_usecs;
 }
 
@@ -241,6 +247,14 @@ Variable<unsigned> s_wake_secs("wake_secs", s_rtc.expected_wake_secs, units::kSe
                                s_vg);
 Variable<unsigned> s_last_wake_secs("last_wake_secs", s_rtc.last_wake_secs, units::kSeconds,
                                     nullptr, 0, s_vg);
+#if defined(HAVE_STANDBY_INPUT)
+DIn s_din_chrg("chrg", &s_app.module_system(), kChrgPin, nullptr, s_vg);
+DIn s_din_stby("stby", &s_app.module_system(), kStbyPin, nullptr, s_vg);
+Variable<unsigned> s_var_charge("charge", 0, nullptr, nullptr, VariableBase::Flags::kNoPublish,
+                                s_vg);
+Variable<unsigned> s_var_standby("standby", 0, nullptr, nullptr, VariableBase::Flags::kNoPublish,
+                                 s_vg);
+#endif
 
 #define SETSTR(X, VAL) strncpy(X, (VAL), sizeof(X) - 1)
 
@@ -330,9 +344,14 @@ class LoraPacketSender : public satellite::PacketSender {
     m_readings.emplace_back(
         new satellite::PacketIntReading(idx(), "soil ADC counts", s_moisture.countsVar()));
     m_readings.emplace_back(new satellite::PacketIntReading(idx(), "status", s_status_var));
+#if defined(HAVE_STANDBY_INPUT)
+    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "charge", s_var_charge));
+    m_readings.emplace_back(new satellite::PacketIntReading(idx(), "standby", s_var_standby));
+#else
     m_readings.emplace_back(new satellite::PacketIntReading(idx(), "wake time", s_wake_secs));
     m_readings.emplace_back(
         new satellite::PacketIntReading(idx(), "last wake time", s_last_wake_secs));
+#endif
   }
 
   void update() {
@@ -348,6 +367,10 @@ class LoraPacketSender : public satellite::PacketSender {
     }
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
+#if defined(HAVE_STANDBY_INPUT)
+    s_var_charge = s_din_chrg.read() ? 1 : 0;
+    s_var_standby = s_din_stby.read() ? 1 : 0;
+#endif
 
     if (s_boot) {
       // At boot, for each sensor send one packet describing the sensor.
@@ -442,8 +465,19 @@ WebButton s_button_restart = s_app.createRestartButton();
 
 void handleWebRoot(AsyncWebServerRequest* request) {
   const int64_t now_usecs = total_usecs();
+
+  // Read the sensors.
   s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_shtc3.read();
+  s_five_v_sensor.read();
+  s_battery_sensor.read();
+  s_solar_sensor.read();
+#if defined(HAVE_STANDBY_INPUT)
+  s_var_charge = s_din_chrg.read() ? 1 : 0;
+  s_var_standby = s_din_stby.read() ? 1 : 0;
+#endif
+
+  // Write the page.
   s_html.clear();
   html::writeTableInto(&s_html, s_vg);
   html::writeTableInto(&s_html, s_app.wifi_manager().variables());
