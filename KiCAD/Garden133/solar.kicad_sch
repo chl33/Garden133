@@ -2462,7 +2462,7 @@
 	)
 	(text "VBAT+"
 		(exclude_from_sim no)
-		(at 94.234 88.646 0)
+		(at 44.45 97.282 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -2662,16 +2662,6 @@
 			(type default)
 		)
 		(uuid "136151f2-3c6a-426c-a5b8-7ac855db81c4")
-	)
-	(wire
-		(pts
-			(xy 90.17 91.44) (xy 54.61 91.44)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "142280e3-b016-4b72-9c0d-95d32ea3949e")
 	)
 	(wire
 		(pts
@@ -2935,16 +2925,6 @@
 	)
 	(wire
 		(pts
-			(xy 54.61 91.44) (xy 54.61 100.33)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "b477b26d-e4af-41fa-b8ae-e76b003194c7")
-	)
-	(wire
-		(pts
 			(xy 104.14 58.42) (xy 118.11 58.42)
 		)
 		(stroke
@@ -3204,28 +3184,6 @@
 		(uuid "d378c9c2-4b66-4415-a0b8-64c5312440fc")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 131.5576 58.42 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "VBATTERY+"
-		(shape input)
-		(at 90.17 91.44 0)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "e468c474-8351-4109-9aba-4be7fb01455e")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 103.6176 91.44 0)
 			(effects
 				(font
 					(size 1.27 1.27)

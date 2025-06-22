@@ -85,8 +85,10 @@ constexpr int kSolarPlusPin = 35;  // ADC1_CH7
 constexpr int kDebugSwitchPin = 04;
 constexpr int kLedPin = 16;
 #if defined(HAVE_STANDBY_INPUT)
+// NOTE: it looks from the circuit diagram that these pins should be reversed, but
+//  these are the pin assignments that work in testing.
 constexpr int kChrgPin = 27;
-constexpr int kStbyPin = 28;
+constexpr int kStbyPin = 26;
 #endif
 
 // Default sleep for 5 minute between readings (for now).
@@ -248,8 +250,10 @@ Variable<unsigned> s_wake_secs("wake_secs", s_rtc.expected_wake_secs, units::kSe
 Variable<unsigned> s_last_wake_secs("last_wake_secs", s_rtc.last_wake_secs, units::kSeconds,
                                     nullptr, 0, s_vg);
 #if defined(HAVE_STANDBY_INPUT)
-DIn s_din_chrg("chrg", &s_app.module_system(), kChrgPin, nullptr, s_vg);
-DIn s_din_stby("stby", &s_app.module_system(), kStbyPin, nullptr, s_vg);
+constexpr bool kDinPublish = true;
+constexpr bool kDinInvert = false;
+DIn s_din_chrg("chrg", &s_app.module_system(), kChrgPin, nullptr, s_vg, kDinPublish, kDinInvert);
+DIn s_din_stby("stby", &s_app.module_system(), kStbyPin, nullptr, s_vg, kDinPublish, kDinInvert);
 Variable<unsigned> s_var_charge("charge", 0, nullptr, nullptr, VariableBase::Flags::kNoPublish,
                                 s_vg);
 Variable<unsigned> s_var_standby("standby", 0, nullptr, nullptr, VariableBase::Flags::kNoPublish,
