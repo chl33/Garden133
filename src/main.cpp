@@ -26,7 +26,7 @@
 #include <vector>
 
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 5
+#define VERSION_MINOR 6
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
@@ -335,8 +335,8 @@ class PacketMoistureReading : public satellite::PacketFloatReading {
 
 class LoraPacketSender : public satellite::PacketSender {
  public:
-  LoraPacketSender(const og3_Device* device, og3::App* app, og3::satellite::PacketSender::Rtc* rtc)
-      : satellite::PacketSender(device, app, rtc) {
+  LoraPacketSender(og3_Device* device, og3::App* app, og3::satellite::PacketSender::Rtc* rtc)
+      : satellite::PacketSender(device, app, rtc), m_mutable_device(device) {
     auto idx = [this]() { return m_readings.size(); };
     m_readings.reserve(10);
     m_readings.emplace_back(new PacketTemperatureReading(idx(), s_shtc3));
@@ -359,6 +359,7 @@ class LoraPacketSender : public satellite::PacketSender {
   }
 
   void update() {
+    SETSTR(m_mutable_device->name, s_app.board_cname());
     const int64_t now_usecs = total_usecs();
     const int64_t now_secs = now_usecs / kUsecInSec;
     const int64_t secs_since_info_sent = now_secs - m_rtc->secs_device_sent;
@@ -416,6 +417,9 @@ class LoraPacketSender : public satellite::PacketSender {
     s_app.log().debugf("Sent LoRa packet (seq_id:%u, %zu bytes).", m_rtc->seq_id - 1,
                        ostream.bytes_written);
   }
+
+  // Non-const pointer so we can update the name.
+  og3_Device* m_mutable_device;
 };
 
 og3_Device* s_device() {
@@ -423,7 +427,8 @@ og3_Device* s_device() {
 
   ret.id = s_board_id;  // may not be set yet
   ret.manufacturer = kCleeOrg;
-  SETSTR(ret.name, kModel);
+  SETSTR(ret.name, s_app.board_cname());
+  SETSTR(ret.device_type, kModel);
   ret.hardware_version.major = HARDWARE_VERSION_MAJOR;
   ret.hardware_version.minor = HARDWARE_VERSION_MINOR;
   ret.software_version.major = VERSION_MAJOR;
