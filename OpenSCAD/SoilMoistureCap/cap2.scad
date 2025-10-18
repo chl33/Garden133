@@ -84,7 +84,7 @@ module cap2(top) {
         // Space for connector
         translate(connector_space_offset) {
           cube(moisture_sensor_conn_dims +
-               [ conn_space * 2, conn_space * 2 + conn_y_extra, conn_space * 2 ]);
+               [ conn_space * 2, conn_space * 2 + conn_y_extra + 0.5, conn_space * 2 ]);
         }
         // Cut-off either the top or the bottom.
         if (top) {
