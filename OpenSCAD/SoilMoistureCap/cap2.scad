@@ -1,7 +1,7 @@
 include<moisture_sensor.scad>
 include<ProjectBox/headers.scad>
 
-sensor_cap_length = 40;
+sensor_cap_length = 26;
 sensor_cap_top = 5;
 
 screw_diameter = 3;
@@ -100,11 +100,11 @@ module cap2(top) {
       // Adding some material to stop the connector from disconnecting.
       if (top) {
         translate(connector_space_offset - [ 0, 0, 4 + epsilon - moisture_sensor_conn_dims[2] ]) {
-          cube([ 2, 4, 6 ]);
+          cube([ 2, 3, 6 ]);
         }
         translate(connector_space_offset - [ 0, 0, 4 + epsilon - moisture_sensor_conn_dims[2] ] +
                   [ moisture_sensor_conn_dims[0], 0, 0 ]) {
-          cube([ 2, 4, 6 ]);
+          cube([ 2, 3, 6 ]);
         }
       }
       if (!top) {
