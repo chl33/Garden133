@@ -59,7 +59,7 @@ module cap2(top) {
 
   slice_z = bottom_thickness + gap + moisture_sensor_dims[2] / 2;
 
-  module screw_hole() { cylinder(2 + outer_dims[2], screw_diameter / 2, screw_diameter / 2); }
+  module screw_hole() { cylinder(outer_dims[2], screw_diameter / 2, screw_diameter / 2); }
 
   difference() {
     union() {
