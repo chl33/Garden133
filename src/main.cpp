@@ -592,7 +592,8 @@ void setup() {
 void loop() {
   og3::s_app.loop();
 
-  // Check debug-mode again, so we can switch away from debug mode while the board is running.
+  // Check the debug-mode toggle button again, so we can switch away from debug mode
+  //  while the board is running.
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
 
   if (og3::s_is_debug_mode) {
@@ -611,7 +612,7 @@ void loop() {
     og3::start_sleep();
   }
 
-  // Here, are are in "normal mode" and the LoRa radio is running.
+  // Here, we are in "normal mode" and the LoRa radio is running.
 
   // Just once, read the sensors, and send a LoRa packet.
   static bool s_sent = false;
@@ -623,7 +624,6 @@ void loop() {
   // Here, we have sent a packet and may send further ones before sleeping.
   // Wait for is_sending() to be unset, meaning that all packets have been sent,
   //  then wait for 1 second and then go to sleep.
-
   if (og3::s_packet_sender.is_sending()) {
     return;
   }
