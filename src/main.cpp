@@ -19,6 +19,7 @@
 #include <og3/shtc3.h>
 #include <og3/tasks.h>
 #include <og3/units.h>
+#include <og3/web_server.h>
 #include <pb_encode.h>
 
 #include <memory>
@@ -471,7 +472,7 @@ WebButton s_button_mqtt_config = s_app.createMqttConfigButton();
 WebButton s_button_app_status = s_app.createAppStatusButton();
 WebButton s_button_restart = s_app.createRestartButton();
 
-void handleWebRoot(AsyncWebServerRequest* request) {
+NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   const int64_t now_usecs = total_usecs();
 
   // Read the sensors.
@@ -501,16 +502,18 @@ void handleWebRoot(AsyncWebServerRequest* request) {
   s_button_mqtt_config.add_button(&s_html);
   s_button_app_status.add_button(&s_html);
   s_button_restart.add_button(&s_html);
-  sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+  sendWrappedHTML(request, response, s_app.board_cname(), kSoftware, s_html.c_str());
+  NET_REPLY(request, ESP_OK);
 }
 
-void handleLoraConfig(AsyncWebServerRequest* request) {
-  ::og3::read(*request, s_lora_vg);
+NetHandlerStatus handleLoraConfig(NetRequest* request, NetResponse* response) {
+  read(*request, s_lora_vg);
   s_html.clear();
   html::writeFormTableInto(&s_html, s_lora_vg);
   s_html += HTML_BUTTON("/", "Back");
-  sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+  sendWrappedHTML(request, response, s_app.board_cname(), kSoftware, s_html.c_str());
   s_app.config().write_config(s_lora_vg);
+  NET_REPLY(request, ESP_OK);
 }
 
 void start_sleep() {
@@ -583,8 +586,8 @@ void setup() {
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
 
-  og3::s_app.web_server().on("/", og3::handleWebRoot);
-  og3::s_app.web_server().on("/lora", og3::handleLoraConfig);
+  og3::s_app.web_server_module().on("/", og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/lora", og3::handleLoraConfig);
   og3::s_app.setup();
 }
 
