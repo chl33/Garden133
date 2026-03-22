@@ -26,7 +26,7 @@
 #include <vector>
 
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 6
+#define VERSION_MINOR 7
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
@@ -586,8 +586,10 @@ void setup() {
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
 
-  og3::s_app.web_server_module().on("/", og3::handleWebRoot);
-  og3::s_app.web_server_module().on("/lora", og3::handleLoraConfig);
+  og3::s_app.web_server_module().on("/", HTTP_GET, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/", HTTP_POST, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/lora", HTTP_GET, og3::handleLoraConfig);
+  og3::s_app.web_server_module().on("/lora", HTTP_POST, og3::handleLoraConfig);
   og3::s_app.setup();
 }
 
