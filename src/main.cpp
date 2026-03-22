@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
-#include <LoRa.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
@@ -523,7 +522,7 @@ void start_sleep() {
     s_rtc.code |= Status::kFilterSaveFailure;
   }
 
-  LoRa.sleep();
+  og3::s_lora.sleep();
 
   // Set a timer which will wakeup the board, then put the board into deep sleep.
   s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
