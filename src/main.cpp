@@ -7,7 +7,6 @@
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
 #include <og3/constants.h>
-#include <og3/dependencies.h>
 #include <og3/din.h>
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
