@@ -24,6 +24,8 @@
 #include <memory>
 #include <vector>
 
+#include "svelteesp32async.h"
+
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 7
 #define VERSION_PATCH 0
@@ -153,7 +155,7 @@ auto s_lora_options = []() -> LoRaModule::Options {
 VariableGroup s_lora_vg("lora");
 LoRaModule s_lora(s_lora_options(), &s_app, s_lora_vg, nullptr);
 
-Variable<unsigned> s_sleep_min("sleep_min", kDefaultSleepMin, units::kMinutes, "sleep min",
+Variable<unsigned> s_sleep_min("sleepMin", kDefaultSleepMin, units::kMinutes, "sleep min",
                                VariableBase::kSettable | VariableBase::kConfig, s_lora_vg);
 
 template <typename T>
@@ -433,6 +435,7 @@ og3_Device* s_device() {
   ret.software_version.major = VERSION_MAJOR;
   ret.software_version.minor = VERSION_MINOR;
   ret.software_version.patch = VERSION_PATCH;
+  ret.timeout_secs = s_sleep_min.value() * 60 * 3 + 10;
   return &ret;
 }
 
@@ -535,6 +538,118 @@ void start_sleep() {
   esp_deep_sleep_start();
 }
 
+static String s_body;
+
+NetHandlerStatus apiGetWifi(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_app.wifi_manager().variables().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putWifiConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_app.wifi_manager().variables().updateFromJson(obj);
+  s_app.config().write_config(s_app.wifi_manager().variables());
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetMqtt(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_app.mqtt_manager().variables().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putMqttConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_app.mqtt_manager().variables().updateFromJson(obj);
+  s_app.config().write_config(s_app.mqtt_manager().variables());
+  if (s_app.mqtt_manager().isEnabled() && !s_app.mqtt_manager().isConnected()) {
+    s_app.mqtt_manager().connect();
+  } else if (!s_app.mqtt_manager().isEnabled() && s_app.mqtt_manager().isConnected()) {
+    s_app.mqtt_manager().disconnect();
+  }
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
+  const int64_t now_usecs = total_usecs();
+  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
+  s_shtc3.read();
+  s_five_v_sensor.read();
+  s_battery_sensor.read();
+  s_solar_sensor.read();
+
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  json["mqttConnected"] = s_app.mqtt_manager().isConnected();
+  json["software"] = VERSION;
+  json["hardware"] = "Garden133";
+  json["bootCount"] = s_rtc.bootCount;
+  json["uptime"] = millis() / 1000;
+
+  JsonObject status = json["status"].to<JsonObject>();
+  status["temperature"] = s_shtc3.temperature();
+  status["humidity"] = s_shtc3.humidity();
+  status["moisture"] = s_moisture.value();
+  status["moisture_filt"] = s_moisture_filter.value();
+  status["moisture_raw"] = s_moisture.raw_counts();
+  status["v_five"] = s_five_v_sensor.value();
+  status["v_battery"] = s_battery_sensor.value();
+  status["v_solar"] = s_solar_sensor.value();
+#if defined(HAVE_STANDBY_INPUT)
+  status["charging"] = s_din_chrg.read();
+  status["standby"] = s_din_stby.read();
+#endif
+
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetConfig(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_cvg.toJson(json, VariableBase::kConfig);
+  s_lora_vg.toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_cvg.updateFromJson(obj);
+  s_app.config().write_config(s_cvg);
+  s_lora_vg.updateFromJson(obj);
+  s_app.config().write_config(s_lora_vg);
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
 }  // namespace og3
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -585,10 +700,27 @@ void setup() {
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
 
-  og3::s_app.web_server_module().on("/", HTTP_GET, og3::handleWebRoot);
-  og3::s_app.web_server_module().on("/", HTTP_POST, og3::handleWebRoot);
-  og3::s_app.web_server_module().on("/lora", HTTP_GET, og3::handleLoraConfig);
-  og3::s_app.web_server_module().on("/lora", HTTP_POST, og3::handleLoraConfig);
+  initSvelteStaticFiles(&og3::s_app.web_server_module().native_server());
+  og3::s_app.web_server_module().on("/api/wifi", HTTP_GET, og3::apiGetWifi);
+  og3::s_app.web_server_module().on("/api/mqtt", HTTP_GET, og3::apiGetMqtt);
+  og3::s_app.web_server_module().on("/api/status", HTTP_GET, og3::apiGetStatus);
+  og3::s_app.web_server_module().on("/api/config", HTTP_GET, og3::apiGetConfig);
+
+  og3::s_app.web_server_module().onJson("/api/wifi", HTTP_PUT, og3::putWifiConfig);
+  og3::s_app.web_server_module().onJson("/api/mqtt", HTTP_PUT, og3::putMqttConfig);
+  og3::s_app.web_server_module().onJson("/api/config", HTTP_PUT, og3::putConfig);
+
+  og3::s_app.web_server_module().on("/api/restart", HTTP_POST,
+                                    [](og3::NetRequest* request, og3::NetResponse* response) {
+                                      response->send(200, "text/plain", "restarting");
+                                      og3::s_app.tasks().runIn(1000, []() { ESP.restart(); });
+                                      NET_REPLY(request, ESP_OK);
+                                    });
+
+  og3::s_app.web_server_module().on("/old", HTTP_GET, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/old", HTTP_POST, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/old_lora", HTTP_GET, og3::handleLoraConfig);
+  og3::s_app.web_server_module().on("/old_lora", HTTP_POST, og3::handleLoraConfig);
   og3::s_app.setup();
 }
 
