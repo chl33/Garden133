@@ -180,7 +180,7 @@ class MoistureSensor : public ConfigModule {
       : ConfigModule("moisture", &s_app),
         m_mapped_adc(
             {
-                .name = "soil moisture",
+                .name = "moisture",
                 .pin = kMoisturePin,
                 .units = units::kPercentage,
                 .raw_description = "soil moisture raw value",

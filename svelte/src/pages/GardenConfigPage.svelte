@@ -80,29 +80,44 @@
       <div class="form-group">
         <label for="frequency">Frequency</label>
         <select id="frequency" bind:value={localConfig.frequency}>
-          <option value={0}>433 MHz</option>
-          <option value={1}>868 MHz</option>
-          <option value={2}>915 MHz</option>
+          <option value="433MHz">433 MHz</option>
+          <option value="868MHz">868 MHz</option>
+          <option value="915MHz">915 MHz</option>
         </select>
       </div>
       <div class="form-group">
         <label for="spreadingFactor">Spreading Factor (SF)</label>
         <select id="spreadingFactor" bind:value={localConfig.spreadingFactor}>
-          <option value={0}>SF7</option>
-          <option value={1}>SF8</option>
-          <option value={2}>SF9</option>
-          <option value={3}>SF10</option>
-          <option value={4}>SF11</option>
-          <option value={5}>SF12</option>
+          <option value="SF7">SF7</option>
+          <option value="SF8">SF8</option>
+          <option value="SF9">SF9</option>
+          <option value="SF10">SF10</option>
+          <option value="SF11">SF11</option>
+          <option value="SF12">SF12</option>
         </select>
         <p class="help">Higher means better range but slower transmission.</p>
       </div>
       <div class="form-group">
         <label for="signalBandwidth">Signal Bandwidth</label>
         <select id="signalBandwidth" bind:value={localConfig.signalBandwidth}>
-          <option value={0}>125 kHz</option>
-          <option value={1}>500 kHz</option>
+          <option value="125k">125 kHz</option>
+          <option value="500k">500 kHz</option>
         </select>
+      </div>
+    </section>
+
+    <!-- Sensor Calibration -->
+    <section class="card">
+      <h2>Sensor Calibration</h2>
+      <div class="form-group">
+        <label for="moisture_in_min">Moisture 0% ADC counts</label>
+        <input id="moisture_in_min" type="number" bind:value={localConfig.moisture_in_min} />
+        <p class="help">ADC reading when sensor is dry.</p>
+      </div>
+      <div class="form-group">
+        <label for="moisture_in_max">Moisture 100% ADC counts</label>
+        <input id="moisture_in_max" type="number" bind:value={localConfig.moisture_in_max} />
+        <p class="help">ADC reading when sensor is in water.</p>
       </div>
     </section>
   </div>

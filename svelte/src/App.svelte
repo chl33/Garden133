@@ -18,9 +18,11 @@
   export let config = writable({
     sleepMin: 5,
     syncWord: 240,
-    frequency: 2,
-    spreadingFactor: 1,
-    signalBandwidth: 0
+    frequency: '915MHz',
+    spreadingFactor: 'SF8',
+    signalBandwidth: '125k',
+    moisture_in_min: 780,
+    moisture_in_max: 355
   });
 
   export let wifi = writable({
