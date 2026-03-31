@@ -235,13 +235,13 @@ int64_t total_usecs() {
   return esp_timer_get_time() + wake_sleep_usecs;
 }
 
-AdcVoltage s_five_v_sensor("fivev voltage", &s_app, kFiveVPin, "fivev raw value",
+AdcVoltage s_five_v_sensor("fivevVoltage", &s_app, kFiveVPin, "fivev raw value",
                            "voltage from battery or solar", 3.3 * 2, s_vg, s_cvg);
 
-AdcVoltage s_battery_sensor("battery voltage", &s_app, kBatteryPin, "battery raw value", nullptr,
+AdcVoltage s_battery_sensor("batteryVoltage", &s_app, kBatteryPin, "battery raw value", nullptr,
                             3.3 * 32.0 / 22.0, s_vg, s_cvg);
 
-AdcVoltage s_solar_sensor("solar voltage", &s_app, kSolarPlusPin, "solar raw value", nullptr,
+AdcVoltage s_solar_sensor("solarVoltage", &s_app, kSolarPlusPin, "solar raw value", nullptr,
                           3.3 * 2, s_vg, s_cvg);
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
@@ -609,11 +609,11 @@ NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
   status["temperature"] = s_shtc3.temperature();
   status["humidity"] = s_shtc3.humidity();
   status["moisture"] = s_moisture.value();
-  status["moisture_filt"] = s_moisture_filter.value();
-  status["moisture_raw"] = s_moisture.raw_counts();
-  status["v_five"] = s_five_v_sensor.value();
-  status["v_battery"] = s_battery_sensor.value();
-  status["v_solar"] = s_solar_sensor.value();
+  status["moistureFilt"] = s_moisture_filter.value();
+  status["moistureRaw"] = s_moisture.raw_counts();
+  status["fivevVoltage"] = s_five_v_sensor.value();
+  status["batteryVoltage"] = s_battery_sensor.value();
+  status["solarVoltage"] = s_solar_sensor.value();
 #if defined(HAVE_STANDBY_INPUT)
   status["charging"] = s_din_chrg.read();
   status["standby"] = s_din_stby.read();

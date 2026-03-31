@@ -1,0 +1,124 @@
+--- "/home/chris/Downloads/plant-watering-ui (12).tsx"	2025-10-12 12:18:47.095825650 -0400
++++ "/home/chris/Downloads/plant-watering-ui (13).tsx"	2025-10-12 16:36:26.644781235 -0400
+@@ -19,17 +19,11 @@
+   
+   // Calculate the progress based on value
+   $: progress = Math.min(Math.max(value, 0), 100);
+-  $: offset = circumference - (progress / 100) * (angle / 360) * circumference;
+   
+-  // Determine color based on value relative to min/max
+-  $: color = getColor(value, min, max);
++  // Calculate segment endpoints as percentages of the full arc
++  $: minPercent = Math.min(Math.max(min, 0), 100);
++  $: maxPercent = Math.min(Math.max(max, 0), 100);
+   
+-  function getColor(val, minimum, maximum) {
+-    if (val < minimum) return '#ef4444'; // red - too dry
+-    if (val > maximum) return '#3b82f6'; // blue - too wet
+-    return '#10b981'; // green - good
+-  }
+-
+   function polarToCartesian(centerX, centerY, radius, angleInDegrees) {
+     const angleInRadians = (angleInDegrees - 90) * Math.PI / 180.0;
+     return {
+@@ -49,13 +43,35 @@
+   }
+ 
+   $: center = gaugeSize / 2;
++  
++  // Background arc (full range)
+   $: backgroundPath = describeArc(center, center, radius, startAngle, startAngle + angle);
+-  $: progressPath = describeArc(center, center, radius, startAngle, startAngle + (angle * progress / 100));
++  
++  // Yellow segment (0 to min)
++  $: yellowEndAngle = startAngle + (angle * minPercent / 100);
++  $: yellowPath = describeArc(center, center, radius, startAngle, yellowEndAngle);
++  
++  // Green segment (min to max)
++  $: greenStartAngle = startAngle + (angle * minPercent / 100);
++  $: greenEndAngle = startAngle + (angle * maxPercent / 100);
++  $: greenPath = describeArc(center, center, radius, greenStartAngle, greenEndAngle);
++  
++  // Blue segment (max to 100)
++  $: blueStartAngle = startAngle + (angle * maxPercent / 100);
++  $: blueEndAngle = startAngle + angle;
++  $: bluePath = describeArc(center, center, radius, blueStartAngle, blueEndAngle);
++  
++  // Progress indicator (current value)
++  $: progressAngle = startAngle + (angle * progress / 100);
++  $: progressDot = polarToCartesian(center, center, radius, progressAngle);
++  
++  // Determine color for center text based on value
++  $: textColor = progress < minPercent ? '#f59e0b' : progress > maxPercent ? '#3b82f6' : '#10b981';
+ </script>
+ 
+ <div class="gauge-container" class:large={size === 'large'}>
+   <svg width={gaugeSize} height={gaugeSize * 0.75} viewBox="0 0 {gaugeSize} {gaugeSize * 0.75}">
+-    <!-- Background arc -->
++    <!-- Background arc (gray) -->
+     <path
+       d={backgroundPath}
+       fill="none"
+@@ -64,15 +80,43 @@
+       stroke-linecap="round"
+     />
+     
+-    <!-- Progress arc -->
++    <!-- Yellow segment (below minimum) -->
++    <path
++      d={yellowPath}
++      fill="none"
++      stroke="#fbbf24"
++      stroke-width={strokeWidth}
++      stroke-linecap="round"
++    />
++    
++    <!-- Green segment (optimal range) -->
+     <path
+-      d={progressPath}
++      d={greenPath}
+       fill="none"
+-      stroke={color}
++      stroke="#10b981"
+       stroke-width={strokeWidth}
+       stroke-linecap="round"
+     />
+     
++    <!-- Blue segment (above maximum) -->
++    <path
++      d={bluePath}
++      fill="none"
++      stroke="#60a5fa"
++      stroke-width={strokeWidth}
++      stroke-linecap="round"
++    />
++    
++    <!-- Current value indicator dot -->
++    <circle
++      cx={progressDot.x}
++      cy={progressDot.y}
++      r={strokeWidth * 0.8}
++      fill={textColor}
++      stroke="white"
++      stroke-width="2"
++    />
++    
+     <!-- Center text -->
+     <text
+       x={center}
+@@ -80,6 +124,7 @@
+       text-anchor="middle"
+       class="gauge-text"
+       class:large-text={size === 'large'}
++      fill={textColor}
+     >
+       {value}%
+     </text>
+@@ -104,7 +149,6 @@
+   .gauge-text {
+     font-size: 20px;
+     font-weight: 700;
+-    fill: #1f2937;
+   }
+ 
+   .large-text {

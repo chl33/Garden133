@@ -18,3 +18,5 @@ secrets*.yaml
 *.3mf
 board*.ini
 /compile_commands.json
+/src/svelteesp32async.h
+/local.ini
