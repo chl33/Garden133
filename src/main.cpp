@@ -202,6 +202,7 @@ class MoistureSensor : public ConfigModule {
   float value() const { return m_mapped_adc.value(); }
   int raw_counts() const { return m_mapped_adc.raw_counts(); }
   Variable<unsigned>& countsVar() { return m_mapped_adc.raw_value(); }
+  VariableGroup& configVarGroup() { return m_cvg; }
 
  private:
   // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
@@ -636,6 +637,16 @@ NetHandlerStatus apiGetConfig(NetRequest* request, NetResponse* response) {
   NET_REPLY(request, ESP_OK);
 }
 
+NetHandlerStatus apiGetMoistureConfig(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_moisture.configVarGroup().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
 NetHandlerStatus putConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
   if (!jsonIn.is<JsonObject>()) {
     response->send(500, "text/plain", "not a json object");
@@ -646,6 +657,19 @@ NetHandlerStatus putConfig(NetRequest* request, NetResponse* response, JsonVaria
   s_app.config().write_config(s_cvg);
   s_lora_vg.updateFromJson(obj);
   s_app.config().write_config(s_lora_vg);
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
+                                   JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_moisture.configVarGroup().updateFromJson(obj);
+  s_app.config().write_config(s_moisture.configVarGroup());
   response->send(200, "text/plain", "ok");
   NET_REPLY(request, ESP_OK);
 }
@@ -705,10 +729,12 @@ void setup() {
   og3::s_app.web_server_module().on("/api/mqtt", HTTP_GET, og3::apiGetMqtt);
   og3::s_app.web_server_module().on("/api/status", HTTP_GET, og3::apiGetStatus);
   og3::s_app.web_server_module().on("/api/config", HTTP_GET, og3::apiGetConfig);
+  og3::s_app.web_server_module().on("/api/moisture/config", HTTP_GET, og3::apiGetMoistureConfig);
 
   og3::s_app.web_server_module().onJson("/api/wifi", HTTP_PUT, og3::putWifiConfig);
   og3::s_app.web_server_module().onJson("/api/mqtt", HTTP_PUT, og3::putMqttConfig);
   og3::s_app.web_server_module().onJson("/api/config", HTTP_PUT, og3::putConfig);
+  og3::s_app.web_server_module().onJson("/api/moisture/config", HTTP_PUT, og3::putMoistureConfig);
 
   og3::s_app.web_server_module().on("/api/restart", HTTP_POST,
                                     [](og3::NetRequest* request, og3::NetResponse* response) {

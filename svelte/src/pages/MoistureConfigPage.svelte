@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { Settings, Save, RefreshCcw } from 'lucide-svelte';
+  import { Settings, Save, RefreshCcw, Droplets, Activity } from 'lucide-svelte';
 
   export let config;
+  export let systemStatus;
 
-  $: conf = $config;
+  $: status = $systemStatus;
 
   let localConfig = {};
 
@@ -18,20 +19,20 @@
 
   async function saveConfig() {
     try {
-      const response = await fetch('/api/config', {
+      const response = await fetch('/api/moisture/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localConfig)
       });
       if (response.ok) {
-        alert('Configuration saved!');
+        alert('Calibration saved!');
         config.set({ ...localConfig });
       } else {
-        alert('Failed to save configuration');
+        alert('Failed to save calibration');
       }
     } catch (err) {
       console.error('Error saving config:', err);
-      alert('Error saving configuration');
+      alert('Error saving calibration');
     }
   }
 
@@ -43,8 +44,8 @@
 <div class="config-page">
   <header class="header">
     <div class="title-with-icon">
-      <Settings size={24} />
-      <h1>Garden Control Configuration</h1>
+      <Droplets size={24} />
+      <h1>Moisture Sensor Calibration</h1>
     </div>
     <div class="actions">
       <button class="btn btn-secondary" on:click={resetConfig}>
@@ -53,56 +54,50 @@
       </button>
       <button class="btn btn-primary" on:click={saveConfig}>
         <Save size={18} />
-        Save Configuration
+        Save Calibration
       </button>
     </div>
   </header>
 
   <div class="config-grid">
-    <!-- Operation Settings -->
-    <section class="card">
-      <h2>Operation Settings</h2>
-      <div class="form-group">
-        <label for="sleepMin">Sleep Interval (minutes)</label>
-        <input id="sleepMin" type="number" step="1" bind:value={localConfig.sleepMin} />
-        <p class="help">Time to deep sleep between sensor readings.</p>
+    <!-- Live Readings -->
+    <section class="card highlight">
+      <div class="card-header">
+        <Activity size={20} class="text-blue" />
+        <h2>Live Readings</h2>
       </div>
+      <div class="card-content">
+        <div class="stat">
+          <span class="label">Current ADC Counts</span>
+          <span class="value">{status.status.moistureRaw}</span>
+        </div>
+        <div class="stat">
+          <span class="label">Mapped Moisture</span>
+          <span class="value">{status.status.moisture.toFixed(1)}%</span>
+        </div>
+        <div class="stat">
+          <span class="label">Filtered Moisture</span>
+          <span class="value">{status.status.moistureFilt.toFixed(1)}%</span>
+        </div>
+      </div>
+      <p class="help mt-4">Use these live values to determine your 0% (dry) and 100% (wet) thresholds.</p>
     </section>
 
-    <!-- LoRa Settings -->
+    <!-- Sensor Calibration -->
     <section class="card">
-      <h2>LoRa Settings</h2>
-      <div class="form-group">
-        <label for="syncWord">Sync Word</label>
-        <input id="syncWord" type="number" step="1" bind:value={localConfig.syncWord} />
-        <p class="help">Must match your LoRa gateway (Default: 240/0xF0).</p>
+      <div class="card-header">
+        <Settings size={20} />
+        <h2>ADC Calibration</h2>
       </div>
       <div class="form-group">
-        <label for="frequency">Frequency</label>
-        <select id="frequency" bind:value={localConfig.frequency}>
-          <option value="433MHz">433 MHz</option>
-          <option value="868MHz">868 MHz</option>
-          <option value="915MHz">915 MHz</option>
-        </select>
+        <label for="moistureInMin">Moisture 0% ADC counts</label>
+        <input id="moistureInMin" type="number" bind:value={localConfig.moistureInMin} />
+        <p class="help">ADC reading when sensor is dry.</p>
       </div>
       <div class="form-group">
-        <label for="spreadingFactor">Spreading Factor (SF)</label>
-        <select id="spreadingFactor" bind:value={localConfig.spreadingFactor}>
-          <option value="SF7">SF7</option>
-          <option value="SF8">SF8</option>
-          <option value="SF9">SF9</option>
-          <option value="SF10">SF10</option>
-          <option value="SF11">SF11</option>
-          <option value="SF12">SF12</option>
-        </select>
-        <p class="help">Higher means better range but slower transmission.</p>
-      </div>
-      <div class="form-group">
-        <label for="signalBandwidth">Signal Bandwidth</label>
-        <select id="signalBandwidth" bind:value={localConfig.signalBandwidth}>
-          <option value="125k">125 kHz</option>
-          <option value="500k">500 kHz</option>
-        </select>
+        <label for="moistureInMax">Moisture 100% ADC counts</label>
+        <input id="moistureInMax" type="number" bind:value={localConfig.moistureInMax} />
+        <p class="help">ADC reading when sensor is in water.</p>
       </div>
     </section>
   </div>
@@ -151,13 +146,43 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
 
+  .card.highlight {
+    border: 2px solid #dbeafe;
+    background: #f8fafc;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid #f3f4f6;
+    padding-bottom: 0.75rem;
+  }
+
   h2 {
     font-size: 1.125rem;
     font-weight: 600;
     color: #374151;
-    margin-bottom: 1.25rem;
-    border-bottom: 1px solid #f3f4f6;
-    padding-bottom: 0.75rem;
+    margin: 0;
+  }
+
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+  }
+
+  .stat .label {
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  .stat .value {
+    font-weight: 700;
+    color: #111827;
+    font-family: monospace;
+    font-size: 1.125rem;
   }
 
   .form-group {
@@ -172,7 +197,7 @@
     margin-bottom: 0.375rem;
   }
 
-  input, select {
+  input {
     width: 100%;
     padding: 0.5rem;
     border: 1px solid #d1d5db;
@@ -185,6 +210,8 @@
     color: #6b7280;
     margin-top: 0.25rem;
   }
+
+  .mt-4 { margin-top: 1rem; }
 
   .btn {
     display: flex;
@@ -211,4 +238,6 @@
   }
 
   .btn-secondary:hover { background: #e5e7eb; }
+
+  :global(.text-blue) { color: #3b82f6; }
 </style>

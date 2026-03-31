@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { Settings, Wifi, Radio, Home, RefreshCw } from 'lucide-svelte';
+  import { Settings, Wifi, Radio, Home, RefreshCw, Droplets } from 'lucide-svelte';
 
   export let currentPage;
   export let systemStatus;
@@ -42,6 +42,14 @@
     on:click={() => navigate('config')}>
     <Settings size={20} />
     <span>Garden Control</span>
+  </button>
+
+  <button
+    class="nav-button"
+    class:active={currentPage === 'moisture'}
+    on:click={() => navigate('moisture')}>
+    <Droplets size={20} />
+    <span>Moisture Setup</span>
   </button>
 
   <div class="nav-section">System Settings</div>

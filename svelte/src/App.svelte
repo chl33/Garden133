@@ -5,6 +5,7 @@
   import Sidebar from './components/Sidebar.svelte';
   import HomePage from './pages/HomePage.svelte';
   import GardenConfigPage from './pages/GardenConfigPage.svelte';
+  import MoistureConfigPage from './pages/MoistureConfigPage.svelte';
   import WiFiConfigPage from './pages/WiFiConfigPage.svelte';
   import MQTTConfigPage from './pages/MQTTConfigPage.svelte';
 
@@ -20,9 +21,12 @@
     syncWord: 240,
     frequency: '915MHz',
     spreadingFactor: 'SF8',
-    signalBandwidth: '125k',
-    moisture_in_min: 780,
-    moisture_in_max: 355
+    signalBandwidth: '125k'
+  });
+
+  export let moistureConfig = writable({
+    moistureInMin: 780,
+    moistureInMax: 355
   });
 
   export let wifi = writable({
@@ -75,6 +79,20 @@
     }
   }
 
+  // Load Moisture config from server
+  async function loadMoistureConfig() {
+    try {
+      const response = await fetch(`${API_BASE}/moisture/config`);
+      if (!response.ok) throw new Error('Failed to load moisture configuration');
+      const data = await response.json();
+      moistureConfig.set(data);
+      isOnline.set(true);
+    } catch (err) {
+      console.error('Error loading moisture config:', err);
+      isOnline.set(false);
+    }
+  }
+
   // Load WiFi config from server
   async function loadWiFiConfig() {
     try {
@@ -122,6 +140,7 @@
     loading = true;
     await Promise.all([
       loadConfig(),
+      loadMoistureConfig(),
       loadWiFiConfig(),
       loadMQTTConfig(),
       loadSystemStatus()
@@ -162,6 +181,8 @@
           <HomePage {config} {wifi} {mqtt} {systemStatus} on:changePage={(e) => changePage(e.detail)} />
         {:else if currentPage === 'config'}
           <GardenConfigPage {config} />
+        {:else if currentPage === 'moisture'}
+          <MoistureConfigPage config={moistureConfig} {systemStatus} />
         {:else if currentPage === 'wifi'}
           <WiFiConfigPage {wifi} />
         {:else if currentPage === 'mqtt'}
