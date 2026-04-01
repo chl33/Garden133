@@ -479,8 +479,8 @@ NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   const int64_t now_usecs = total_usecs();
 
   // Read the sensors.
-  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_shtc3.read();
+  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_five_v_sensor.read();
   s_battery_sensor.read();
   s_solar_sensor.read();
@@ -592,8 +592,8 @@ NetHandlerStatus putMqttConfig(NetRequest* request, NetResponse* response, JsonV
 
 NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
   const int64_t now_usecs = total_usecs();
-  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_shtc3.read();
+  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_five_v_sensor.read();
   s_battery_sensor.read();
   s_solar_sensor.read();
