@@ -26,8 +26,8 @@
 
 #include "svelteesp32async.h"
 
-#define VERSION_MAJOR 0
-#define VERSION_MINOR 7
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 0
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
