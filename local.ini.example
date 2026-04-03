@@ -1,0 +1,26 @@
+[platformio]
+default_envs = board1_usb
+
+[local]
+build_flags =
+;	'-D LOG_DEBUG'
+
+wifi_upload_flags =
+
+;; garden9.local ().  The first v6.2 board. Says '1c' on the board.
+[board1]
+extends = node32s
+build_flags =
+        ${node32s.build_flags}
+	'-D HARDWARE_VERSION_MAJOR=6'
+	'-D HARDWARE_VERSION_MINOR=2'
+
+[env:board1_wifi]
+extends = board1, wifi
+upload_port = {BOARD-IP-ADDRESSS}
+upload_flags =
+        ${wifi.upload_flags}
+        ${local.wifi_upload_flags}
+
+[env:board1_usb]
+extends = board1, usb
