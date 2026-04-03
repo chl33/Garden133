@@ -17,6 +17,8 @@ post for a project overview.
 - **LoRa Communication:** Connects to a base station ([LoRa133](https://github.com/chl33/LoRa133)) to integrate with Home Assistant.
 - **OTA Updates:** Support for wireless firmware updates.
 
+![Svelte Web interface](images/svelte-inteface.png)
+
 ## Hardware
 This project includes the custom hardware design and 3D printable parts.
 
