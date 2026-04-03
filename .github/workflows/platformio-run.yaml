@@ -8,18 +8,36 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: svelte/package-lock.json
+
+      - name: Install Node.js dependencies
+        working-directory: svelte
+        run: npm install
+
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
+
       - name: Setup secrets for build
-        run: cp secrets.ini.example secrets.ini && cp secrets-usb.ini.example secrets-usb.ini
+        run: |
+          cp secrets.ini.example secrets.ini
+          cp local.ini.example local.ini
+
       - name: Build PlatformIO Project
         run: pio run

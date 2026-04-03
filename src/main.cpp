@@ -1,14 +1,12 @@
-// Copyright (c) 2025 Chris Lee and contibuters.
+// Copyright (c) 2026 Chris Lee and contributors.
 // Licensed under the MIT license. See LICENSE file in the project root for details.
 
 #include <Arduino.h>
 #include <LittleFS.h>
-#include <LoRa.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
 #include <og3/constants.h>
-#include <og3/dependencies.h>
 #include <og3/din.h>
 #include <og3/ha_app.h>
 #include <og3/html_table.h>
@@ -20,13 +18,16 @@
 #include <og3/shtc3.h>
 #include <og3/tasks.h>
 #include <og3/units.h>
+#include <og3/web_server.h>
 #include <pb_encode.h>
 
 #include <memory>
 #include <vector>
 
-#define VERSION_MAJOR 0
-#define VERSION_MINOR 6
+#include "svelteesp32async.h"
+
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 0
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
@@ -154,7 +155,7 @@ auto s_lora_options = []() -> LoRaModule::Options {
 VariableGroup s_lora_vg("lora");
 LoRaModule s_lora(s_lora_options(), &s_app, s_lora_vg, nullptr);
 
-Variable<unsigned> s_sleep_min("sleep_min", kDefaultSleepMin, units::kMinutes, "sleep min",
+Variable<unsigned> s_sleep_min("sleepMin", kDefaultSleepMin, units::kMinutes, "sleep min",
                                VariableBase::kSettable | VariableBase::kConfig, s_lora_vg);
 
 template <typename T>
@@ -179,7 +180,7 @@ class MoistureSensor : public ConfigModule {
       : ConfigModule("moisture", &s_app),
         m_mapped_adc(
             {
-                .name = "soil moisture",
+                .name = "moisture",
                 .pin = kMoisturePin,
                 .units = units::kPercentage,
                 .raw_description = "soil moisture raw value",
@@ -201,6 +202,7 @@ class MoistureSensor : public ConfigModule {
   float value() const { return m_mapped_adc.value(); }
   int raw_counts() const { return m_mapped_adc.raw_counts(); }
   Variable<unsigned>& countsVar() { return m_mapped_adc.raw_value(); }
+  VariableGroup& configVarGroup() { return m_cvg; }
 
  private:
   // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
@@ -234,13 +236,13 @@ int64_t total_usecs() {
   return esp_timer_get_time() + wake_sleep_usecs;
 }
 
-AdcVoltage s_five_v_sensor("fivev voltage", &s_app, kFiveVPin, "fivev raw value",
+AdcVoltage s_five_v_sensor("fivevVoltage", &s_app, kFiveVPin, "fivev raw value",
                            "voltage from battery or solar", 3.3 * 2, s_vg, s_cvg);
 
-AdcVoltage s_battery_sensor("battery voltage", &s_app, kBatteryPin, "battery raw value", nullptr,
+AdcVoltage s_battery_sensor("batteryVoltage", &s_app, kBatteryPin, "battery raw value", nullptr,
                             3.3 * 32.0 / 22.0, s_vg, s_cvg);
 
-AdcVoltage s_solar_sensor("solar voltage", &s_app, kSolarPlusPin, "solar raw value", nullptr,
+AdcVoltage s_solar_sensor("solarVoltage", &s_app, kSolarPlusPin, "solar raw value", nullptr,
                           3.3 * 2, s_vg, s_cvg);
 
 Variable<unsigned> s_status_var("status", 0, nullptr, "status flags", 0, s_vg);
@@ -434,6 +436,7 @@ og3_Device* s_device() {
   ret.software_version.major = VERSION_MAJOR;
   ret.software_version.minor = VERSION_MINOR;
   ret.software_version.patch = VERSION_PATCH;
+  ret.timeout_secs = s_sleep_min.value() * 60 * 3 + 10;
   return &ret;
 }
 
@@ -472,12 +475,12 @@ WebButton s_button_mqtt_config = s_app.createMqttConfigButton();
 WebButton s_button_app_status = s_app.createAppStatusButton();
 WebButton s_button_restart = s_app.createRestartButton();
 
-void handleWebRoot(AsyncWebServerRequest* request) {
+NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   const int64_t now_usecs = total_usecs();
 
   // Read the sensors.
-  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_shtc3.read();
+  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
   s_five_v_sensor.read();
   s_battery_sensor.read();
   s_solar_sensor.read();
@@ -502,16 +505,18 @@ void handleWebRoot(AsyncWebServerRequest* request) {
   s_button_mqtt_config.add_button(&s_html);
   s_button_app_status.add_button(&s_html);
   s_button_restart.add_button(&s_html);
-  sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+  sendWrappedHTML(request, response, s_app.board_cname(), kSoftware, s_html.c_str());
+  NET_REPLY(request, ESP_OK);
 }
 
-void handleLoraConfig(AsyncWebServerRequest* request) {
-  ::og3::read(*request, s_lora_vg);
+NetHandlerStatus handleLoraConfig(NetRequest* request, NetResponse* response) {
+  read(*request, s_lora_vg);
   s_html.clear();
   html::writeFormTableInto(&s_html, s_lora_vg);
   s_html += HTML_BUTTON("/", "Back");
-  sendWrappedHTML(request, s_app.board_cname(), kSoftware, s_html.c_str());
+  sendWrappedHTML(request, response, s_app.board_cname(), kSoftware, s_html.c_str());
   s_app.config().write_config(s_lora_vg);
+  NET_REPLY(request, ESP_OK);
 }
 
 void start_sleep() {
@@ -523,7 +528,7 @@ void start_sleep() {
     s_rtc.code |= Status::kFilterSaveFailure;
   }
 
-  LoRa.sleep();
+  og3::s_lora.sleep();
 
   // Set a timer which will wakeup the board, then put the board into deep sleep.
   s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
@@ -532,6 +537,141 @@ void start_sleep() {
   esp_sleep_enable_timer_wakeup((kSecInMin * s_sleep_min.value()) * kUsecInSec -
                                 esp_timer_get_time());
   esp_deep_sleep_start();
+}
+
+static String s_body;
+
+NetHandlerStatus apiGetWifi(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_app.wifi_manager().variables().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putWifiConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_app.wifi_manager().variables().updateFromJson(obj);
+  s_app.config().write_config(s_app.wifi_manager().variables());
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetMqtt(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_app.mqtt_manager().variables().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putMqttConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_app.mqtt_manager().variables().updateFromJson(obj);
+  s_app.config().write_config(s_app.mqtt_manager().variables());
+  if (s_app.mqtt_manager().isEnabled() && !s_app.mqtt_manager().isConnected()) {
+    s_app.mqtt_manager().connect();
+  } else if (!s_app.mqtt_manager().isEnabled() && s_app.mqtt_manager().isConnected()) {
+    s_app.mqtt_manager().disconnect();
+  }
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
+  const int64_t now_usecs = total_usecs();
+  s_shtc3.read();
+  s_moisture_filter.addSample(now_usecs * 1e-6, s_moisture.read());
+  s_five_v_sensor.read();
+  s_battery_sensor.read();
+  s_solar_sensor.read();
+
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  json["mqttConnected"] = s_app.mqtt_manager().isConnected();
+  json["software"] = VERSION;
+  json["hardware"] = "Garden133";
+  json["bootCount"] = s_rtc.bootCount;
+  json["uptime"] = millis() / 1000;
+
+  JsonObject status = json["status"].to<JsonObject>();
+  status["temperature"] = s_shtc3.temperature();
+  status["humidity"] = s_shtc3.humidity();
+  status["moisture"] = s_moisture.value();
+  status["moistureFilt"] = s_moisture_filter.value();
+  status["moistureRaw"] = s_moisture.raw_counts();
+  status["fivevVoltage"] = s_five_v_sensor.value();
+  status["batteryVoltage"] = s_battery_sensor.value();
+  status["solarVoltage"] = s_solar_sensor.value();
+#if defined(HAVE_STANDBY_INPUT)
+  status["charging"] = s_din_chrg.read();
+  status["standby"] = s_din_stby.read();
+#endif
+
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetConfig(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_cvg.toJson(json, VariableBase::kConfig);
+  s_lora_vg.toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus apiGetMoistureConfig(NetRequest* request, NetResponse* response) {
+  JsonDocument jsondoc;
+  JsonObject json = jsondoc.to<JsonObject>();
+  s_moisture.configVarGroup().toJson(json, VariableBase::kConfig);
+  s_body.clear();
+  serializeJson(jsondoc, s_body);
+  response->send(200, "application/json", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putConfig(NetRequest* request, NetResponse* response, JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_cvg.updateFromJson(obj);
+  s_app.config().write_config(s_cvg);
+  s_lora_vg.updateFromJson(obj);
+  s_app.config().write_config(s_lora_vg);
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
+}
+
+NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
+                                   JsonVariant& jsonIn) {
+  if (!jsonIn.is<JsonObject>()) {
+    response->send(500, "text/plain", "not a json object");
+    NET_REPLY(request, ESP_FAIL);
+  }
+  JsonObject obj = jsonIn.as<JsonObject>();
+  s_moisture.configVarGroup().updateFromJson(obj);
+  s_app.config().write_config(s_moisture.configVarGroup());
+  response->send(200, "text/plain", "ok");
+  NET_REPLY(request, ESP_OK);
 }
 
 }  // namespace og3
@@ -584,8 +724,29 @@ void setup() {
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
 
-  og3::s_app.web_server().on("/", og3::handleWebRoot);
-  og3::s_app.web_server().on("/lora", og3::handleLoraConfig);
+  initSvelteStaticFiles(&og3::s_app.web_server_module().native_server());
+  og3::s_app.web_server_module().on("/api/wifi", HTTP_GET, og3::apiGetWifi);
+  og3::s_app.web_server_module().on("/api/mqtt", HTTP_GET, og3::apiGetMqtt);
+  og3::s_app.web_server_module().on("/api/status", HTTP_GET, og3::apiGetStatus);
+  og3::s_app.web_server_module().on("/api/config", HTTP_GET, og3::apiGetConfig);
+  og3::s_app.web_server_module().on("/api/moisture/config", HTTP_GET, og3::apiGetMoistureConfig);
+
+  og3::s_app.web_server_module().onJson("/api/wifi", HTTP_PUT, og3::putWifiConfig);
+  og3::s_app.web_server_module().onJson("/api/mqtt", HTTP_PUT, og3::putMqttConfig);
+  og3::s_app.web_server_module().onJson("/api/config", HTTP_PUT, og3::putConfig);
+  og3::s_app.web_server_module().onJson("/api/moisture/config", HTTP_PUT, og3::putMoistureConfig);
+
+  og3::s_app.web_server_module().on("/api/restart", HTTP_POST,
+                                    [](og3::NetRequest* request, og3::NetResponse* response) {
+                                      response->send(200, "text/plain", "restarting");
+                                      og3::s_app.tasks().runIn(1000, []() { ESP.restart(); });
+                                      NET_REPLY(request, ESP_OK);
+                                    });
+
+  og3::s_app.web_server_module().on("/old", HTTP_GET, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/old", HTTP_POST, og3::handleWebRoot);
+  og3::s_app.web_server_module().on("/old_lora", HTTP_GET, og3::handleLoraConfig);
+  og3::s_app.web_server_module().on("/old_lora", HTTP_POST, og3::handleLoraConfig);
   og3::s_app.setup();
 }
 

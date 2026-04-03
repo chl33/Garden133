@@ -1,4 +1,4 @@
-# Garden133
+# Garden133 (v1.0.0)
 
 Garden133 is a solar and battery-powered device for monitoring garden soil moisture levels.
 It reads the moisture level of soil using a capacitive moisture sensor and transmits data via LoRa.
@@ -9,13 +9,15 @@ post for a project overview.
 ![Garden133 in enclosure](images/garden133-board-in-enclosure-768x652.webp)
 
 ## Features
-- **Soil Moisture Sensing:** Capacitive sensor measurement.
-- **Device Environmental Monitoring:**
-    SHTC3 sensor for air temperature and humidity inside the device enclosure.
+- **Modern Web Interface:** A responsive Svelte-based UI for real-time status monitoring and calibration (accessible in Debug Mode).
+- **Soil Moisture Sensing:** Capacitive sensor measurement with high-precision calibration.
+- **Dedicated Calibration Page:** View live ADC counts to precisely tune dry/wet thresholds.
+- **Device Environmental Monitoring:** SHTC3 sensor for air temperature and humidity inside the device enclosure.
 - **Power Management:** Solar charging and battery voltage monitoring.
-- **LoRa Communication:** Connects to a base station ([LoRa133](https://github.com/chl33/LoRa133))
-     to integrate with Home Assistant.
-- **OTA Updates:** Supports wireless firmware updates.
+- **LoRa Communication:** Connects to a base station ([LoRa133](https://github.com/chl33/LoRa133)) to integrate with Home Assistant.
+- **OTA Updates:** Support for wireless firmware updates.
+
+![Svelte Web interface](images/svelte-inteface.png)
 
 ## Hardware
 This project includes the custom hardware design and 3D printable parts.
