@@ -3892,7 +3892,7 @@
 			(uuid "fcbae2ae-6920-47ef-84dc-dc8a2e50f4c9")
 		)
 		(instances
-			(project ""
+			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/68ad4c29-b646-4e97-9a96-445ccffd346c"
 					(reference "#PWR43")
 					(unit 1)
@@ -4619,7 +4619,7 @@
 			(uuid "acb3b69b-7c4e-4f44-920f-f85f522fec14")
 		)
 		(instances
-			(project ""
+			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/68ad4c29-b646-4e97-9a96-445ccffd346c"
 					(reference "#PWR47")
 					(unit 1)
@@ -4935,7 +4935,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "chl33_library:SOP65P640X120-8N"
+		(property "Footprint" "SOP65P640X120-8N"
 			(at 73.66 121.92 0)
 			(effects
 				(font
