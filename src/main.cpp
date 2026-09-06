@@ -50,7 +50,7 @@ static const char kManufacturer[] = "Chris Lee";
 static const char kModel[] = "Garden133";
 static const char kSoftware[] = "Garden133 v" VERSION;
 
-constexpr App::LogType kLogType = LOG_METHOD;
+constexpr App::LogType kLogType = OG3_LOG_METHOD;
 constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
 
