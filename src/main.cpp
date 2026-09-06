@@ -36,6 +36,9 @@
 #if HARDWARE_VERSION_MAJOR > 5
 #define HAVE_STANDBY_INPUT
 #endif
+#if HARDWARE_VERSION_MAJOR >= 7
+#define HAVE_MOISTURE_POWER_CTL
+#endif
 
 // TODO
 // - Use interrupt on tx-finished to sleep (didn't work so far).
@@ -50,6 +53,8 @@ static const char kSoftware[] = "Garden133 v" VERSION;
 constexpr App::LogType kLogType = LOG_METHOD;
 constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
+
+constexpr uint32_t kMoistureReadDelayMsec = 50;
 
 constexpr size_t kLoraPacketSize = 255;
 
@@ -83,8 +88,10 @@ constexpr int kFiveVPin = 32;      // ADC1_CH4
 constexpr int kBatteryPin = 33;    // ADC1_CH5
 constexpr int kMoisturePin = 34;   // ADC1_CH6
 constexpr int kSolarPlusPin = 35;  // ADC1_CH7
-constexpr int kMoisturePowerPin =
-    25;                            // Gate control for AO3401A P-FET moisture sensor power switch
+#ifdef HAVE_MOISTURE_POWER_CTL
+// Gate control for AO3401A P-FET moisture sensor power switch
+constexpr int kMoisturePowerPin = 25;
+#endif
 constexpr int kDebugSwitchPin = 04;
 constexpr int kLedPin = 16;
 #if defined(HAVE_STANDBY_INPUT)
@@ -201,10 +208,14 @@ class MoistureSensor : public ConfigModule {
             },
             &s_app.module_system(), m_cvg, s_vg) {}
   float read() {
-    digitalWrite(kMoisturePowerPin, LOW);   // Turn sensor power ON (P-FET Gate LOW)
-    delay(10);                              // Brief settling delay for capacitive oscillator
+#ifdef HAVE_MOISTURE_POWER_CTL
+    digitalWrite(kMoisturePowerPin, LOW);  // Turn sensor power ON (P-FET Gate LOW)
+    delay(kMoistureReadDelayMsec);         // Brief settling delay for capacitive oscillator
+#endif
     float val = m_mapped_adc.read();
+#ifdef HAVE_MOISTURE_POWER_CTL
     digitalWrite(kMoisturePowerPin, HIGH);  // Turn sensor power OFF (P-FET Gate HIGH)
+#endif
     return val;
   }
   float value() const { return m_mapped_adc.value(); }
@@ -215,9 +226,9 @@ class MoistureSensor : public ConfigModule {
  private:
   // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
   // Default ADC reading at which to consider soil moisture to be 100%.
-  static constexpr unsigned kFullMoistureCounts = 355;  // 2*1000/3;
+  static constexpr unsigned kFullMoistureCounts = 1100;
   // Default ADC reading at which to consider soil moisture to be 0%.
-  static constexpr unsigned kNoMoistureCounts = 780;  // 2*2800/2;
+  static constexpr unsigned kNoMoistureCounts = 3300;
 
   static constexpr unsigned kCfgSet = VariableBase::Flags::kConfig | VariableBase::Flags::kSettable;
 
@@ -688,8 +699,10 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
 ////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
+#ifdef HAVE_MOISTURE_POWER_CTL
   pinMode(og3::kMoisturePowerPin, OUTPUT);
   digitalWrite(og3::kMoisturePowerPin, HIGH);  // Default OFF
+#endif
 
   pinMode(og3::kDebugSwitchPin, INPUT);
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
