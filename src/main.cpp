@@ -54,7 +54,9 @@ constexpr App::LogType kLogType = OG3_LOG_METHOD;
 constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
 
-constexpr uint32_t kMoistureReadDelayMsec = 50;
+#ifdef HAVE_MOISTURE_POWER_CTL
+constexpr uint32_t kMoistureSettleMs = 500;
+#endif
 
 constexpr size_t kLoraPacketSize = 255;
 
@@ -207,17 +209,7 @@ class MoistureSensor : public ConfigModule {
                 .valid_in_max = 1 << 12,
             },
             &s_app.module_system(), m_cvg, s_vg) {}
-  float read() {
-#ifdef HAVE_MOISTURE_POWER_CTL
-    digitalWrite(kMoisturePowerPin, LOW);  // Turn sensor power ON (P-FET Gate LOW)
-    delay(kMoistureReadDelayMsec);         // Brief settling delay for capacitive oscillator
-#endif
-    float val = m_mapped_adc.read();
-#ifdef HAVE_MOISTURE_POWER_CTL
-    digitalWrite(kMoisturePowerPin, HIGH);  // Turn sensor power OFF (P-FET Gate HIGH)
-#endif
-    return val;
-  }
+  float read() { return m_mapped_adc.read(); }
   float value() const { return m_mapped_adc.value(); }
   int raw_counts() const { return m_mapped_adc.raw_counts(); }
   Variable<unsigned>& countsVar() { return m_mapped_adc.raw_value(); }
@@ -542,6 +534,10 @@ void start_sleep() {
   s_app.log().debug("Sleeping");
   s_rtc.code &= ~Status::kDebugMode;
 
+#ifdef HAVE_MOISTURE_POWER_CTL
+  digitalWrite(kMoisturePowerPin, HIGH);  // Ensure sensor power is OFF during sleep
+#endif
+
   // Save filter state to memory that is preserved when sleeping.
   if (!s_moisture_filter.saveState(s_rtc.filter_state)) {
     s_rtc.code |= Status::kFilterSaveFailure;
@@ -699,13 +695,16 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
 ////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
-#ifdef HAVE_MOISTURE_POWER_CTL
-  pinMode(og3::kMoisturePowerPin, OUTPUT);
-  digitalWrite(og3::kMoisturePowerPin, HIGH);  // Default OFF
-#endif
-
   pinMode(og3::kDebugSwitchPin, INPUT);
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+  pinMode(og3::kMoisturePowerPin, OUTPUT);
+  // Turn power ON immediately at boot (P-FET Gate LOW).
+  // - In Normal Mode: starts the 500ms settling period right away while other hardware initializes.
+  // - In Debug Mode: keeps power continuously ON so web status requests are instantaneous.
+  digitalWrite(og3::kMoisturePowerPin, LOW);
+#endif
   if (og3::s_is_debug_mode) {
     og3::s_rtc.code |= og3::Status::kDebugMode;
   } else {
@@ -783,43 +782,60 @@ void loop() {
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
 
   if (og3::s_is_debug_mode) {
+#ifdef HAVE_MOISTURE_POWER_CTL
+    // Ensure moisture sensor remains powered ON in debug mode
+    digitalWrite(og3::kMoisturePowerPin, LOW);
+#endif
     return;  // In debug mode, all the work happens in og3::s_app.loop().
   }
 
-  // Here, we are in "normal mode", where we normally take readings, send them via LoRa,
-  //  then go into deep sleep for a while to preserve power.
+  // --- Normal Mode (wake from sleep, send LoRa packet, deep sleep) ---
 
-  // Wait up to 10 seconds for LoRa to start-up at boot.
-  // After that, if LoRa isn't running, just sleep.
+  // Safety timeout: If LoRa fails to initialize within 10 seconds, go to sleep.
   if (!og3::s_lora.is_ok()) {
     if (millis() < og3::kMsecInSec * 10) {
       return;
     }
+    og3::s_app.log().log("LoRa startup timed out, sleeping.");
+#ifdef HAVE_MOISTURE_POWER_CTL
+    digitalWrite(og3::kMoisturePowerPin, HIGH);
+#endif
     og3::start_sleep();
-  }
-
-  // Here, we are in "normal mode" and the LoRa radio is running.
-
-  // Just once, read the sensors, and send a LoRa packet.
-  static bool s_sent = false;
-  if (!s_sent) {
-    og3::s_packet_sender.update();
-    s_sent = true;
-  }
-
-  // Here, we have sent a packet and may send further ones before sleeping.
-  // Wait for is_sending() to be unset, meaning that all packets have been sent,
-  //  then wait for 1 second and then go to sleep.
-  if (og3::s_packet_sender.is_sending()) {
     return;
   }
 
-  // Here, all packets have been sent.
-  // Schedule a sleep in 1 second if not yet started.
-  static bool s_sleep_started = false;
-  if (!s_sleep_started) {
-    s_sleep_started = true;
-    og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
-    og3::s_led.blink(1);
+  // State machine for normal mode
+  enum class NormalState {
+    kWaitingToSampleAndSend,
+    kWaitingForSleep,
+  };
+  static NormalState s_normal_state = NormalState::kWaitingToSampleAndSend;
+
+  switch (s_normal_state) {
+    case NormalState::kWaitingToSampleAndSend:
+#ifdef HAVE_MOISTURE_POWER_CTL
+      if (millis() < og3::kMoistureSettleMs) {
+        return;  // Still within the settling window
+      }
+#endif
+      // 1. Read all sensors (including settled moisture sensor) and transmit packet
+      og3::s_packet_sender.update();
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+      // 2. Power off moisture sensor immediately after taking readings
+      digitalWrite(og3::kMoisturePowerPin, HIGH);
+#endif
+
+      // 3. Since RFM95W doesn't provide a reliable tx-done signal,
+      //    schedule deep sleep in 1 second using og3 tasks.
+      s_normal_state = NormalState::kWaitingForSleep;
+      og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
+      og3::s_led.blink(1);
+      break;
+
+    case NormalState::kWaitingForSleep:
+      // Waiting for the 1-second task to trigger start_sleep().
+      // og3::s_app.loop() continues executing in the background.
+      break;
   }
 }
