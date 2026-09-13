@@ -55,7 +55,7 @@ constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
 
 #ifdef HAVE_MOISTURE_POWER_CTL
-constexpr uint32_t kMoistureSettleMs = 500;
+constexpr uint32_t kMoistureSettleMs = 800;
 #endif
 
 constexpr size_t kLoraPacketSize = 255;
@@ -698,13 +698,6 @@ void setup() {
   pinMode(og3::kDebugSwitchPin, INPUT);
   og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
 
-#ifdef HAVE_MOISTURE_POWER_CTL
-  pinMode(og3::kMoisturePowerPin, OUTPUT);
-  // Turn power ON immediately at boot (P-FET Gate LOW).
-  // - In Normal Mode: starts the 500ms settling period right away while other hardware initializes.
-  // - In Debug Mode: keeps power continuously ON so web status requests are instantaneous.
-  digitalWrite(og3::kMoisturePowerPin, LOW);
-#endif
   if (og3::s_is_debug_mode) {
     og3::s_rtc.code |= og3::Status::kDebugMode;
   } else {
@@ -744,6 +737,19 @@ void setup() {
     // Blink twice on boot if debug mode.
     og3::s_led.blink(2);
   }
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+  pinMode(og3::kMoisturePowerPin, OUTPUT);
+  if (og3::s_is_debug_mode || !og3::s_boot) {
+    // - In Debug Mode: keep power continuously ON.
+    // - When waking from deep sleep: turn power ON immediately at boot so settling overlaps with
+    //    setup.
+    digitalWrite(og3::kMoisturePowerPin, LOW);
+  } else {
+    // - On cold boot in Normal Mode: keep power OFF while sending sensor descriptions.
+    digitalWrite(og3::kMoisturePowerPin, HIGH);
+  }
+#endif
   // Constuct a board ID from the MAC address.
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
@@ -806,28 +812,71 @@ void loop() {
 
   // State machine for normal mode
   enum class NormalState {
+    kInitBootDescriptions,
+    kWaitingForDescriptions,
+    kWaitingBetweenDescAndReadings,
     kWaitingToSampleAndSend,
     kWaitingForSleep,
   };
-  static NormalState s_normal_state = NormalState::kWaitingToSampleAndSend;
+  static NormalState s_normal_state =
+      og3::s_boot ? NormalState::kInitBootDescriptions : NormalState::kWaitingToSampleAndSend;
+  static uint32_t s_desc_finish_ms = 0;
 
   switch (s_normal_state) {
+    case NormalState::kInitBootDescriptions:
+      // Start sending description packets (every 15s)
+      og3::s_packet_sender.update();
+      s_normal_state = NormalState::kWaitingForDescriptions;
+      break;
+
+    case NormalState::kWaitingForDescriptions:
+      // Wait while description packets are still being sent (every 15s at boot)
+      if (og3::s_packet_sender.is_sending()) {
+        return;
+      }
+      // All description packets have finished sending.
+      // Record timestamp to wait 15 seconds before the first sensor reading.
+      s_desc_finish_ms = millis();
+      s_normal_state = NormalState::kWaitingBetweenDescAndReadings;
+      break;
+
+    case NormalState::kWaitingBetweenDescAndReadings: {
+      constexpr uint32_t kDescToReadingWaitMs = 15 * og3::kMsecInSec;
+      const uint32_t elapsed = millis() - s_desc_finish_ms;
+#ifdef HAVE_MOISTURE_POWER_CTL
+      if (elapsed >= kDescToReadingWaitMs - og3::kMoistureSettleMs) {
+        // Power ON moisture sensor 500ms before reading so it has settled
+        digitalWrite(og3::kMoisturePowerPin, LOW);
+      }
+#endif
+      if (elapsed < kDescToReadingWaitMs) {
+        return;
+      }
+      // 15 seconds have elapsed and moisture sensor is settled; take and send readings
+      og3::s_boot = false;
+      og3::s_packet_sender.update();
+#ifdef HAVE_MOISTURE_POWER_CTL
+      digitalWrite(og3::kMoisturePowerPin, HIGH);  // Power OFF moisture sensor
+#endif
+      s_normal_state = NormalState::kWaitingForSleep;
+      og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
+      og3::s_led.blink(1);
+      break;
+    }
+
     case NormalState::kWaitingToSampleAndSend:
 #ifdef HAVE_MOISTURE_POWER_CTL
       if (millis() < og3::kMoistureSettleMs) {
-        return;  // Still within the settling window
+        return;  // Still within the settling window (from boot wake)
       }
 #endif
-      // 1. Read all sensors (including settled moisture sensor) and transmit packet
+      // Sample all sensors and send readings packet
       og3::s_packet_sender.update();
-
 #ifdef HAVE_MOISTURE_POWER_CTL
-      // 2. Power off moisture sensor immediately after taking readings
-      digitalWrite(og3::kMoisturePowerPin, HIGH);
+      digitalWrite(og3::kMoisturePowerPin, HIGH);  // Power OFF moisture sensor
 #endif
-
-      // 3. Since RFM95W doesn't provide a reliable tx-done signal,
-      //    schedule deep sleep in 1 second using og3 tasks.
+      // Since RFM95W doesn't provide a reliable tx-done signal,
+      //  schedule deep sleep in 1 second using og3 tasks.
       s_normal_state = NormalState::kWaitingForSleep;
       og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
       og3::s_led.blink(1);
