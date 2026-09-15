@@ -6722,7 +6722,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ca110001-4020-4020-8020-000000000001")
-		(property "Reference" "Ca11"
+		(property "Reference" "Cb11"
 			(at 135.89 69.85 90)
 			(effects
 				(font
@@ -6774,7 +6774,7 @@
 		(instances
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f"
-					(reference "Ca11")
+					(reference "Cb11")
 					(unit 1)
 				)
 			)
