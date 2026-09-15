@@ -5111,7 +5111,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "730b4192-cc43-4b4c-8c9d-7bc20f5a51ec")
-		(property "Reference" "Ru5"
+		(property "Reference" "Rv5"
 			(at 193.802 40.64 0)
 			(effects
 				(font
@@ -5165,7 +5165,7 @@
 		(instances
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f"
-					(reference "Ru5")
+					(reference "Rv5")
 					(unit 1)
 				)
 			)
@@ -7134,7 +7134,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "dba122d5-4a17-482b-9eec-a6b5705a1e0d")
-		(property "Reference" "RV4"
+		(property "Reference" "Rv4"
 			(at 147.066 158.75 0)
 			(effects
 				(font
@@ -7188,7 +7188,7 @@
 		(instances
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f"
-					(reference "RV4")
+					(reference "Rv4")
 					(unit 1)
 				)
 			)
