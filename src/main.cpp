@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <SPI.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
@@ -721,9 +722,191 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
 
 }  // namespace og3
 
-////////////////////////////////////////////////////////////////////////////////
+// #define RUN_LORA_PIN_TEST 1
+
+#ifdef RUN_LORA_PIN_TEST
+static uint8_t spi_bb_transfer(uint8_t out_byte, int delay_us = 10) {
+  uint8_t in_byte = 0;
+  for (int bit = 7; bit >= 0; bit--) {
+    digitalWrite(23, (out_byte & (1 << bit)) ? HIGH : LOW);  // MOSI
+    delayMicroseconds(delay_us);
+    digitalWrite(18, HIGH);                                  // SCK rising edge
+    delayMicroseconds(delay_us);
+    if (digitalRead(19)) {                                   // Sample MISO
+      in_byte |= (1 << bit);
+    }
+    digitalWrite(18, LOW);  // SCK falling edge
+    delayMicroseconds(delay_us);
+  }
+  return in_byte;
+}
+
+void run_lora_diagnostics() {
+  Serial.begin(115200);
+  delay(1500);
+  Serial.println("\n\n==================================================");
+  Serial.println("     SX1262 / Ra-01SH DEEP HARDWARE DIAGNOSTIC    ");
+  Serial.println("==================================================");
+
+  while (true) {
+    // --- Test 1: BUSY pin pull-up / pull-down float check ---
+    Serial.println("\n--- [Test 1] BUSY Pin (Pin 10 / GPIO17) Connection Check ---");
+    pinMode(17, INPUT_PULLUP);
+    delay(2);
+    int busy_pu = digitalRead(17);
+    pinMode(17, INPUT_PULLDOWN);
+    delay(2);
+    int busy_pd = digitalRead(17);
+    pinMode(17, INPUT);
+    Serial.printf("BUSY read with internal PULLUP: %d | with PULLDOWN: %d\n", busy_pu, busy_pd);
+    if (busy_pu == 1 && busy_pd == 0) {
+      Serial.println(
+          "  -> ALERT: BUSY pin is FLOATING! (Pin 10 is not connected to module, cold solder "
+          "joint)");
+    } else if (busy_pu == 0 && busy_pd == 0) {
+      Serial.println("  -> OK: BUSY is firmly held LOW (0V) by the SX1262 or GND.");
+    } else {
+      Serial.println("  -> BUSY is firmly held HIGH (3.3V).");
+    }
+
+    // --- Test 2: RESET Pulse & BUSY Boot Activity ---
+    Serial.println("\n--- [Test 2] RESET Pulse & SX1262 Boot Monitoring ---");
+    pinMode(14, OUTPUT);
+    digitalWrite(14, LOW);  // Assert RESET
+    delay(10);
+    int busy_reset = digitalRead(17);
+    Serial.printf("BUSY while RESET is LOW: %d\n", busy_reset);
+
+    // Release RESET and monitor BUSY in microsecond resolution
+    uint32_t t0 = micros();
+    digitalWrite(14, HIGH);  // Release RESET
+    int busy_went_high = 0;
+    uint32_t high_start_us = 0;
+    uint32_t high_duration_us = 0;
+    while (micros() - t0 < 35000) {  // Monitor for 35 ms
+      int b = digitalRead(17);
+      if (b == 1 && !busy_went_high) {
+        busy_went_high = 1;
+        high_start_us = micros() - t0;
+      } else if (b == 0 && busy_went_high && high_duration_us == 0) {
+        high_duration_us = (micros() - t0) - high_start_us;
+      }
+    }
+    if (busy_went_high) {
+      Serial.printf(
+          "  -> SUCCESS: BUSY went HIGH at +%u us, stayed HIGH for %u us, then dropped LOW!\n",
+          high_start_us, high_duration_us);
+      Serial.println("     THE SX1262 CHIP IS ALIVE AND EXECUTING ITS BOOTLOADER!");
+    } else {
+      Serial.println("  -> WARNING: BUSY NEVER went HIGH after reset! (Stayed 0V the entire 35ms)");
+      Serial.println(
+          "     Possible causes: Module has no power (Pin 3), Pin 10 shorted to Pin 9 (GND), or "
+          "module dead.");
+    }
+
+    // --- Test 3: Bit-Bang SPI (50 kHz slow clock) ---
+    Serial.println("\n--- [Test 3] Bit-Bang SPI Communication (50 kHz) ---");
+    pinMode(5, OUTPUT);   // NSS
+    digitalWrite(5, HIGH);
+    pinMode(18, OUTPUT);  // SCK
+    digitalWrite(18, LOW);
+    pinMode(23, OUTPUT);  // MOSI
+    digitalWrite(23, LOW);
+    pinMode(19, INPUT);   // MISO
+    delay(5);
+
+    int miso_idle = digitalRead(19);
+    Serial.printf("MISO with NSS HIGH (should be 1 via Ru2 pull-up): %d\n", miso_idle);
+
+    digitalWrite(5, LOW);  // NSS LOW
+    delayMicroseconds(10);
+    int miso_nss_low = digitalRead(19);
+    Serial.printf("MISO immediately after NSS LOW (SX1262 status bit 7, should be 0): %d\n",
+                  miso_nss_low);
+    Serial.println("  [Probe Window] Holding NSS LOW for 3 seconds:");
+    for (int s = 1; s <= 3; s++) {
+      Serial.printf("    t=%ds: NSS pin is driven LOW (0V). MISO reads: %d\n", s, digitalRead(19));
+      delay(1000);
+    }
+
+    // Send GetStatus (0xC0 0x00)
+    uint8_t bb_status = spi_bb_transfer(0xC0);
+    uint8_t bb_dummy = spi_bb_transfer(0x00);
+    digitalWrite(5, HIGH);  // NSS HIGH
+    delayMicroseconds(20);
+
+    Serial.printf("Bit-Bang GetStatus (0xC0 0x00) -> Status: 0x%02X, Dummy: 0x%02X\n", bb_status,
+                  bb_dummy);
+    if (bb_status != 0xFF) {
+      Serial.printf("  -> SUCCESS! Chip responded over SPI: Status = 0x%02X\n", bb_status);
+    } else {
+      Serial.println("  -> Failed: Status returned 0xFF (no response on MISO).");
+    }
+
+    // Try reading register 0x0320 (version string)
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    spi_bb_transfer(0x1D);  // ReadRegister
+    spi_bb_transfer(0x03);  // Reg MSB
+    spi_bb_transfer(0x20);  // Reg LSB
+    spi_bb_transfer(0x00);  // Status dummy
+    char ver_bb[8] = {0};
+    for (int i = 0; i < 7; i++) {
+      ver_bb[i] = (char)spi_bb_transfer(0x00);
+    }
+    digitalWrite(5, HIGH);
+    Serial.printf("Bit-Bang Read Reg 0x0320: \"%s\" (Hex: %02X %02X %02X %02X %02X %02X %02X)\n",
+                  ver_bb, (uint8_t)ver_bb[0], (uint8_t)ver_bb[1], (uint8_t)ver_bb[2],
+                  (uint8_t)ver_bb[3], (uint8_t)ver_bb[4], (uint8_t)ver_bb[5], (uint8_t)ver_bb[6]);
+
+    // --- Test 4: Hardware SPI (1 MHz) ---
+    Serial.println("\n--- [Test 4] Hardware SPI Communication (1 MHz) ---");
+    SPI.begin(18, 19, 23, -1);
+    pinMode(5, OUTPUT);
+    digitalWrite(5, HIGH);
+    delay(5);
+
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    uint8_t hw_status = SPI.transfer(0xC0);
+    uint8_t hw_dummy = SPI.transfer(0x00);
+    digitalWrite(5, HIGH);
+    SPI.endTransaction();
+    Serial.printf("Hardware SPI GetStatus -> Status: 0x%02X, Dummy: 0x%02X\n", hw_status, hw_dummy);
+
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    SPI.transfer(0x1D);  // ReadRegister
+    SPI.transfer(0x03);  // MSB
+    SPI.transfer(0x20);  // LSB
+    SPI.transfer(0x00);  // Status
+    char ver_hw[8] = {0};
+    for (int i = 0; i < 7; i++) {
+      ver_hw[i] = (char)SPI.transfer(0x00);
+    }
+    digitalWrite(5, HIGH);
+    SPI.endTransaction();
+    SPI.end();
+    Serial.printf(
+        "Hardware SPI Read Reg 0x0320: \"%s\" (Hex: %02X %02X %02X %02X %02X %02X %02X)\n", ver_hw,
+        (uint8_t)ver_hw[0], (uint8_t)ver_hw[1], (uint8_t)ver_hw[2], (uint8_t)ver_hw[3],
+        (uint8_t)ver_hw[4], (uint8_t)ver_hw[5], (uint8_t)ver_hw[6]);
+
+    Serial.println("\n==================================================");
+    Serial.println("  Cycle complete. Retesting in 5 seconds...       ");
+    Serial.println("==================================================");
+    delay(5000);
+  }
+}
+#endif
 
 void setup() {
+#ifdef RUN_LORA_PIN_TEST
+  run_lora_diagnostics();
+#endif
+
 #if HARDWARE_VERSION_MAJOR >= 8
   pinMode(og3::kDebugSwitchPin, INPUT_PULLUP);
 #else
