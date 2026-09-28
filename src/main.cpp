@@ -39,6 +39,9 @@
 #if HARDWARE_VERSION_MAJOR >= 7
 #define HAVE_MOISTURE_POWER_CTL
 #endif
+#if HARDWARE_VERSION_MAJOR >= 8
+#define HAVE_AI_THINKER_LORA
+#endif
 
 // TODO
 // - Use interrupt on tx-finished to sleep (didn't work so far).
@@ -84,7 +87,12 @@ static const char kHumidity[] = "humidity";
 // Define the pins used by the transceiver module.
 constexpr int kLoraSS = 5;
 constexpr int kLoraRst = 14;
+#ifdef HAVE_AI_THINKER_LORA
+constexpr int kLoraDio1 = 2;
+constexpr int kLoraBusy = 17;
+#else
 constexpr int kLoraDio0 = 2;
+#endif
 
 constexpr int kFiveVPin = 32;      // ADC1_CH4
 constexpr int kBatteryPin = 33;    // ADC1_CH5
@@ -95,6 +103,17 @@ constexpr int kSolarPlusPin = 35;  // ADC1_CH7
 constexpr int kMoisturePowerPin = 25;
 #endif
 constexpr int kDebugSwitchPin = 04;
+inline bool read_debug_switch() {
+#if HARDWARE_VERSION_MAJOR >= 8
+  // Board v8+: Switch 2 connects GPIO4 to GND with external pull-up Rv5.
+  // Switch ON (closed) = GND (LOW) -> Debug Mode.
+  return digitalRead(kDebugSwitchPin) == LOW;
+#else
+  // Board < v8: Push switch connects GPIO4 to 3.3V when activated.
+  // HIGH -> Debug Mode.
+  return digitalRead(kDebugSwitchPin) == HIGH;
+#endif
+}
 constexpr int kLedPin = 16;
 #if defined(HAVE_STANDBY_INPUT)
 // NOTE: it looks from the circuit diagram that these pins should be reversed, but
@@ -146,6 +165,16 @@ Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_
 
 auto s_lora_options = []() -> LoRaModule::Options {
   LoRaModule::Options opts;
+  opts.gpio_ss = kLoraSS;
+  opts.gpio_rst = kLoraRst;
+#ifdef HAVE_AI_THINKER_LORA
+  opts.module_type = LoRaModule::Options::ModuleType::kSX1262;
+  opts.gpio_dio1 = kLoraDio1;
+  opts.gpio_busy = kLoraBusy;
+  opts.tcxo_voltage = 0.0f;  // Ai-Thinker Ra-01SH uses standard crystal oscillator (XTAL)
+#else
+  opts.gpio_dio0 = kLoraDio0;
+#endif
   opts.sync_word = 0xF0;
   opts.enable_crc = true;
   // opts.on_transmit_done = []() { s_led.off(); };
@@ -695,8 +724,12 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
 ////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
+#if HARDWARE_VERSION_MAJOR >= 8
+  pinMode(og3::kDebugSwitchPin, INPUT_PULLUP);
+#else
   pinMode(og3::kDebugSwitchPin, INPUT);
-  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+#endif
+  og3::s_is_debug_mode = og3::read_debug_switch();
 
   if (og3::s_is_debug_mode) {
     og3::s_rtc.code |= og3::Status::kDebugMode;
@@ -785,7 +818,7 @@ void loop() {
 
   // Check the debug-mode toggle button again, so we can switch away from debug mode
   //  while the board is running.
-  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+  og3::s_is_debug_mode = og3::read_debug_switch();
 
   if (og3::s_is_debug_mode) {
 #ifdef HAVE_MOISTURE_POWER_CTL
