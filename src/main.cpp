@@ -354,13 +354,13 @@ class PacketMoistureReading : public satellite::PacketFloatReading {
         m_moisture_filter(moisture_filter) {}
 
   bool read() {
+    const int64_t now_usecs = total_usecs();
+    const float reading = m_moisture.read();
     // When the power supply is < 3.2V, it seems moisture sensor readings are not trustworthy.
     m_is_ok = s_five_v_sensor.read() > kMinVForValidReading;
-    if (!m_is_ok) {
-      return false;
+    if (m_is_ok) {
+      m_moisture_filter.addSample(now_usecs * 1e-6, reading);
     }
-    const int64_t now_usecs = total_usecs();
-    m_moisture_filter.addSample(now_usecs * 1e-6, m_moisture.read());
     return true;
   }
   bool write(og3_Packet& packet) final {
