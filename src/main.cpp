@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <SPI.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
@@ -27,7 +28,7 @@
 #include "svelteesp32async.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 0
+#define VERSION_MINOR 1
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
@@ -35,6 +36,12 @@
 
 #if HARDWARE_VERSION_MAJOR > 5
 #define HAVE_STANDBY_INPUT
+#endif
+#if HARDWARE_VERSION_MAJOR >= 7
+#define HAVE_MOISTURE_POWER_CTL
+#endif
+#if HARDWARE_VERSION_MAJOR >= 8
+#define HAVE_AI_THINKER_LORA
 #endif
 
 // TODO
@@ -47,9 +54,13 @@ static const char kManufacturer[] = "Chris Lee";
 static const char kModel[] = "Garden133";
 static const char kSoftware[] = "Garden133 v" VERSION;
 
-constexpr App::LogType kLogType = LOG_METHOD;
+constexpr App::LogType kLogType = OG3_LOG_METHOD;
 constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+constexpr uint32_t kMoistureSettleMs = 800;
+#endif
 
 constexpr size_t kLoraPacketSize = 255;
 
@@ -77,13 +88,33 @@ static const char kHumidity[] = "humidity";
 // Define the pins used by the transceiver module.
 constexpr int kLoraSS = 5;
 constexpr int kLoraRst = 14;
+#ifdef HAVE_AI_THINKER_LORA
+constexpr int kLoraDio1 = 2;
+constexpr int kLoraBusy = 17;
+#else
 constexpr int kLoraDio0 = 2;
+#endif
 
 constexpr int kFiveVPin = 32;      // ADC1_CH4
 constexpr int kBatteryPin = 33;    // ADC1_CH5
 constexpr int kMoisturePin = 34;   // ADC1_CH6
 constexpr int kSolarPlusPin = 35;  // ADC1_CH7
+#ifdef HAVE_MOISTURE_POWER_CTL
+// Gate control for AO3401A P-FET moisture sensor power switch
+constexpr int kMoisturePowerPin = 25;
+#endif
 constexpr int kDebugSwitchPin = 04;
+inline bool read_debug_switch() {
+#if HARDWARE_VERSION_MAJOR >= 8
+  // Board v8+: Switch 2 connects GPIO4 to GND with external pull-up Rv5.
+  // Switch ON (closed) = GND (LOW) -> Debug Mode.
+  return digitalRead(kDebugSwitchPin) == LOW;
+#else
+  // Board < v8: Push switch connects GPIO4 to 3.3V when activated.
+  // HIGH -> Debug Mode.
+  return digitalRead(kDebugSwitchPin) == HIGH;
+#endif
+}
 constexpr int kLedPin = 16;
 #if defined(HAVE_STANDBY_INPUT)
 // NOTE: it looks from the circuit diagram that these pins should be reversed, but
@@ -135,6 +166,16 @@ Shtc3 s_shtc3(kTemperature, kHumidity, &s_app.module_system(), "temperature", s_
 
 auto s_lora_options = []() -> LoRaModule::Options {
   LoRaModule::Options opts;
+  opts.gpio_ss = kLoraSS;
+  opts.gpio_rst = kLoraRst;
+#ifdef HAVE_AI_THINKER_LORA
+  opts.module_type = LoRaModule::Options::ModuleType::kSX1262;
+  opts.gpio_dio1 = kLoraDio1;
+  opts.gpio_busy = kLoraBusy;
+  opts.tcxo_voltage = 0.0f;  // Ai-Thinker Ra-01SH uses standard crystal oscillator (XTAL)
+#else
+  opts.gpio_dio0 = kLoraDio0;
+#endif
   opts.sync_word = 0xF0;
   opts.enable_crc = true;
   // opts.on_transmit_done = []() { s_led.off(); };
@@ -207,9 +248,9 @@ class MoistureSensor : public ConfigModule {
  private:
   // Multiple constants by 2/3 compared to Plant133 due to voltage divider.
   // Default ADC reading at which to consider soil moisture to be 100%.
-  static constexpr unsigned kFullMoistureCounts = 355;  // 2*1000/3;
+  static constexpr unsigned kFullMoistureCounts = 1100;
   // Default ADC reading at which to consider soil moisture to be 0%.
-  static constexpr unsigned kNoMoistureCounts = 780;  // 2*2800/2;
+  static constexpr unsigned kNoMoistureCounts = 3300;
 
   static constexpr unsigned kCfgSet = VariableBase::Flags::kConfig | VariableBase::Flags::kSettable;
 
@@ -313,13 +354,13 @@ class PacketMoistureReading : public satellite::PacketFloatReading {
         m_moisture_filter(moisture_filter) {}
 
   bool read() {
+    const int64_t now_usecs = total_usecs();
+    const float reading = m_moisture.read();
     // When the power supply is < 3.2V, it seems moisture sensor readings are not trustworthy.
     m_is_ok = s_five_v_sensor.read() > kMinVForValidReading;
-    if (!m_is_ok) {
-      return false;
+    if (m_is_ok) {
+      m_moisture_filter.addSample(now_usecs * 1e-6, reading);
     }
-    const int64_t now_usecs = total_usecs();
-    m_moisture_filter.addSample(now_usecs * 1e-6, m_moisture.read());
     return true;
   }
   bool write(og3_Packet& packet) final {
@@ -375,6 +416,8 @@ class LoraPacketSender : public satellite::PacketSender {
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
 #if defined(HAVE_STANDBY_INPUT)
+    pinMode(kChrgPin, INPUT_PULLUP);
+    pinMode(kStbyPin, INPUT_PULLUP);
     s_var_charge = s_din_chrg.read() ? 1 : 0;
     s_var_standby = s_din_stby.read() ? 1 : 0;
 #endif
@@ -485,6 +528,8 @@ NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   s_battery_sensor.read();
   s_solar_sensor.read();
 #if defined(HAVE_STANDBY_INPUT)
+  pinMode(kChrgPin, INPUT_PULLUP);
+  pinMode(kStbyPin, INPUT_PULLUP);
   s_var_charge = s_din_chrg.read() ? 1 : 0;
   s_var_standby = s_din_stby.read() ? 1 : 0;
 #endif
@@ -523,6 +568,10 @@ void start_sleep() {
   s_app.log().debug("Sleeping");
   s_rtc.code &= ~Status::kDebugMode;
 
+#ifdef HAVE_MOISTURE_POWER_CTL
+  digitalWrite(kMoisturePowerPin, HIGH);  // Ensure sensor power is OFF during sleep
+#endif
+
   // Save filter state to memory that is preserved when sleeping.
   if (!s_moisture_filter.saveState(s_rtc.filter_state)) {
     s_rtc.code |= Status::kFilterSaveFailure;
@@ -560,6 +609,7 @@ NetHandlerStatus putWifiConfig(NetRequest* request, NetResponse* response, JsonV
   s_app.wifi_manager().variables().updateFromJson(obj);
   s_app.config().write_config(s_app.wifi_manager().variables());
   response->send(200, "text/plain", "ok");
+  s_app.tasks().runIn(1000, []() { ESP.restart(); });
   NET_REPLY(request, ESP_OK);
 }
 
@@ -616,6 +666,8 @@ NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
   status["batteryVoltage"] = s_battery_sensor.value();
   status["solarVoltage"] = s_solar_sensor.value();
 #if defined(HAVE_STANDBY_INPUT)
+  pinMode(kChrgPin, INPUT_PULLUP);
+  pinMode(kStbyPin, INPUT_PULLUP);
   status["charging"] = s_din_chrg.read();
   status["standby"] = s_din_stby.read();
 #endif
@@ -676,11 +728,198 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
 
 }  // namespace og3
 
-////////////////////////////////////////////////////////////////////////////////
+// #define RUN_LORA_PIN_TEST 1
+
+#ifdef RUN_LORA_PIN_TEST
+static uint8_t spi_bb_transfer(uint8_t out_byte, int delay_us = 10) {
+  uint8_t in_byte = 0;
+  for (int bit = 7; bit >= 0; bit--) {
+    digitalWrite(23, (out_byte & (1 << bit)) ? HIGH : LOW);  // MOSI
+    delayMicroseconds(delay_us);
+    digitalWrite(18, HIGH);                                  // SCK rising edge
+    delayMicroseconds(delay_us);
+    if (digitalRead(19)) {                                   // Sample MISO
+      in_byte |= (1 << bit);
+    }
+    digitalWrite(18, LOW);  // SCK falling edge
+    delayMicroseconds(delay_us);
+  }
+  return in_byte;
+}
+
+void run_lora_diagnostics() {
+  Serial.begin(115200);
+  delay(1500);
+  Serial.println("\n\n==================================================");
+  Serial.println("     SX1262 / Ra-01SH DEEP HARDWARE DIAGNOSTIC    ");
+  Serial.println("==================================================");
+
+  while (true) {
+    // --- Test 1: BUSY pin pull-up / pull-down float check ---
+    Serial.println("\n--- [Test 1] BUSY Pin (Pin 10 / GPIO17) Connection Check ---");
+    pinMode(17, INPUT_PULLUP);
+    delay(2);
+    int busy_pu = digitalRead(17);
+    pinMode(17, INPUT_PULLDOWN);
+    delay(2);
+    int busy_pd = digitalRead(17);
+    pinMode(17, INPUT);
+    Serial.printf("BUSY read with internal PULLUP: %d | with PULLDOWN: %d\n", busy_pu, busy_pd);
+    if (busy_pu == 1 && busy_pd == 0) {
+      Serial.println(
+          "  -> ALERT: BUSY pin is FLOATING! (Pin 10 is not connected to module, cold solder "
+          "joint)");
+    } else if (busy_pu == 0 && busy_pd == 0) {
+      Serial.println("  -> OK: BUSY is firmly held LOW (0V) by the SX1262 or GND.");
+    } else {
+      Serial.println("  -> BUSY is firmly held HIGH (3.3V).");
+    }
+
+    // --- Test 2: RESET Pulse & BUSY Boot Activity ---
+    Serial.println("\n--- [Test 2] RESET Pulse & SX1262 Boot Monitoring ---");
+    pinMode(14, OUTPUT);
+    digitalWrite(14, LOW);  // Assert RESET
+    delay(10);
+    int busy_reset = digitalRead(17);
+    Serial.printf("BUSY while RESET is LOW: %d\n", busy_reset);
+
+    // Release RESET and monitor BUSY in microsecond resolution
+    uint32_t t0 = micros();
+    digitalWrite(14, HIGH);  // Release RESET
+    int busy_went_high = 0;
+    uint32_t high_start_us = 0;
+    uint32_t high_duration_us = 0;
+    while (micros() - t0 < 35000) {  // Monitor for 35 ms
+      int b = digitalRead(17);
+      if (b == 1 && !busy_went_high) {
+        busy_went_high = 1;
+        high_start_us = micros() - t0;
+      } else if (b == 0 && busy_went_high && high_duration_us == 0) {
+        high_duration_us = (micros() - t0) - high_start_us;
+      }
+    }
+    if (busy_went_high) {
+      Serial.printf(
+          "  -> SUCCESS: BUSY went HIGH at +%u us, stayed HIGH for %u us, then dropped LOW!\n",
+          high_start_us, high_duration_us);
+      Serial.println("     THE SX1262 CHIP IS ALIVE AND EXECUTING ITS BOOTLOADER!");
+    } else {
+      Serial.println("  -> WARNING: BUSY NEVER went HIGH after reset! (Stayed 0V the entire 35ms)");
+      Serial.println(
+          "     Possible causes: Module has no power (Pin 3), Pin 10 shorted to Pin 9 (GND), or "
+          "module dead.");
+    }
+
+    // --- Test 3: Bit-Bang SPI (50 kHz slow clock) ---
+    Serial.println("\n--- [Test 3] Bit-Bang SPI Communication (50 kHz) ---");
+    pinMode(5, OUTPUT);   // NSS
+    digitalWrite(5, HIGH);
+    pinMode(18, OUTPUT);  // SCK
+    digitalWrite(18, LOW);
+    pinMode(23, OUTPUT);  // MOSI
+    digitalWrite(23, LOW);
+    pinMode(19, INPUT);   // MISO
+    delay(5);
+
+    int miso_idle = digitalRead(19);
+    Serial.printf("MISO with NSS HIGH (should be 1 via Ru2 pull-up): %d\n", miso_idle);
+
+    digitalWrite(5, LOW);  // NSS LOW
+    delayMicroseconds(10);
+    int miso_nss_low = digitalRead(19);
+    Serial.printf("MISO immediately after NSS LOW (SX1262 status bit 7, should be 0): %d\n",
+                  miso_nss_low);
+    Serial.println("  [Probe Window] Holding NSS LOW for 3 seconds:");
+    for (int s = 1; s <= 3; s++) {
+      Serial.printf("    t=%ds: NSS pin is driven LOW (0V). MISO reads: %d\n", s, digitalRead(19));
+      delay(1000);
+    }
+
+    // Send GetStatus (0xC0 0x00)
+    uint8_t bb_status = spi_bb_transfer(0xC0);
+    uint8_t bb_dummy = spi_bb_transfer(0x00);
+    digitalWrite(5, HIGH);  // NSS HIGH
+    delayMicroseconds(20);
+
+    Serial.printf("Bit-Bang GetStatus (0xC0 0x00) -> Status: 0x%02X, Dummy: 0x%02X\n", bb_status,
+                  bb_dummy);
+    if (bb_status != 0xFF) {
+      Serial.printf("  -> SUCCESS! Chip responded over SPI: Status = 0x%02X\n", bb_status);
+    } else {
+      Serial.println("  -> Failed: Status returned 0xFF (no response on MISO).");
+    }
+
+    // Try reading register 0x0320 (version string)
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    spi_bb_transfer(0x1D);  // ReadRegister
+    spi_bb_transfer(0x03);  // Reg MSB
+    spi_bb_transfer(0x20);  // Reg LSB
+    spi_bb_transfer(0x00);  // Status dummy
+    char ver_bb[8] = {0};
+    for (int i = 0; i < 7; i++) {
+      ver_bb[i] = (char)spi_bb_transfer(0x00);
+    }
+    digitalWrite(5, HIGH);
+    Serial.printf("Bit-Bang Read Reg 0x0320: \"%s\" (Hex: %02X %02X %02X %02X %02X %02X %02X)\n",
+                  ver_bb, (uint8_t)ver_bb[0], (uint8_t)ver_bb[1], (uint8_t)ver_bb[2],
+                  (uint8_t)ver_bb[3], (uint8_t)ver_bb[4], (uint8_t)ver_bb[5], (uint8_t)ver_bb[6]);
+
+    // --- Test 4: Hardware SPI (1 MHz) ---
+    Serial.println("\n--- [Test 4] Hardware SPI Communication (1 MHz) ---");
+    SPI.begin(18, 19, 23, -1);
+    pinMode(5, OUTPUT);
+    digitalWrite(5, HIGH);
+    delay(5);
+
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    uint8_t hw_status = SPI.transfer(0xC0);
+    uint8_t hw_dummy = SPI.transfer(0x00);
+    digitalWrite(5, HIGH);
+    SPI.endTransaction();
+    Serial.printf("Hardware SPI GetStatus -> Status: 0x%02X, Dummy: 0x%02X\n", hw_status, hw_dummy);
+
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(5, LOW);
+    delayMicroseconds(10);
+    SPI.transfer(0x1D);  // ReadRegister
+    SPI.transfer(0x03);  // MSB
+    SPI.transfer(0x20);  // LSB
+    SPI.transfer(0x00);  // Status
+    char ver_hw[8] = {0};
+    for (int i = 0; i < 7; i++) {
+      ver_hw[i] = (char)SPI.transfer(0x00);
+    }
+    digitalWrite(5, HIGH);
+    SPI.endTransaction();
+    SPI.end();
+    Serial.printf(
+        "Hardware SPI Read Reg 0x0320: \"%s\" (Hex: %02X %02X %02X %02X %02X %02X %02X)\n", ver_hw,
+        (uint8_t)ver_hw[0], (uint8_t)ver_hw[1], (uint8_t)ver_hw[2], (uint8_t)ver_hw[3],
+        (uint8_t)ver_hw[4], (uint8_t)ver_hw[5], (uint8_t)ver_hw[6]);
+
+    Serial.println("\n==================================================");
+    Serial.println("  Cycle complete. Retesting in 5 seconds...       ");
+    Serial.println("==================================================");
+    delay(5000);
+  }
+}
+#endif
 
 void setup() {
+#ifdef RUN_LORA_PIN_TEST
+  run_lora_diagnostics();
+#endif
+
+#if HARDWARE_VERSION_MAJOR >= 8
+  pinMode(og3::kDebugSwitchPin, INPUT_PULLUP);
+#else
   pinMode(og3::kDebugSwitchPin, INPUT);
-  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+#endif
+  og3::s_is_debug_mode = og3::read_debug_switch();
+
   if (og3::s_is_debug_mode) {
     og3::s_rtc.code |= og3::Status::kDebugMode;
   } else {
@@ -720,6 +959,19 @@ void setup() {
     // Blink twice on boot if debug mode.
     og3::s_led.blink(2);
   }
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+  pinMode(og3::kMoisturePowerPin, OUTPUT);
+  if (og3::s_is_debug_mode || !og3::s_boot) {
+    // - In Debug Mode: keep power continuously ON.
+    // - When waking from deep sleep: turn power ON immediately at boot so settling overlaps with
+    //    setup.
+    digitalWrite(og3::kMoisturePowerPin, LOW);
+  } else {
+    // - On cold boot in Normal Mode: keep power OFF while sending sensor descriptions.
+    digitalWrite(og3::kMoisturePowerPin, HIGH);
+  }
+#endif
   // Constuct a board ID from the MAC address.
   og3::s_board_id = (og3::s_rtc.mac[3] << 8) | (og3::s_rtc.mac[4] ^ og3::s_rtc.mac[5]);
   og3::s_packet_sender.set_board_id(og3::s_board_id);
@@ -748,6 +1000,10 @@ void setup() {
   og3::s_app.web_server_module().on("/old_lora", HTTP_GET, og3::handleLoraConfig);
   og3::s_app.web_server_module().on("/old_lora", HTTP_POST, og3::handleLoraConfig);
   og3::s_app.setup();
+#if defined(HAVE_STANDBY_INPUT)
+  pinMode(og3::kChrgPin, INPUT_PULLUP);
+  pinMode(og3::kStbyPin, INPUT_PULLUP);
+#endif
 }
 
 void loop() {
@@ -755,46 +1011,106 @@ void loop() {
 
   // Check the debug-mode toggle button again, so we can switch away from debug mode
   //  while the board is running.
-  og3::s_is_debug_mode = digitalRead(og3::kDebugSwitchPin);
+  og3::s_is_debug_mode = og3::read_debug_switch();
 
   if (og3::s_is_debug_mode) {
+#ifdef HAVE_MOISTURE_POWER_CTL
+    // Ensure moisture sensor remains powered ON in debug mode
+    digitalWrite(og3::kMoisturePowerPin, LOW);
+#endif
     return;  // In debug mode, all the work happens in og3::s_app.loop().
   }
 
-  // Here, we are in "normal mode", where we normally take readings, send them via LoRa,
-  //  then go into deep sleep for a while to preserve power.
+  // --- Normal Mode (wake from sleep, send LoRa packet, deep sleep) ---
 
-  // Wait up to 10 seconds for LoRa to start-up at boot.
-  // After that, if LoRa isn't running, just sleep.
+  // Safety timeout: If LoRa fails to initialize within 10 seconds, go to sleep.
   if (!og3::s_lora.is_ok()) {
     if (millis() < og3::kMsecInSec * 10) {
       return;
     }
+    og3::s_app.log().log("LoRa startup timed out, sleeping.");
+#ifdef HAVE_MOISTURE_POWER_CTL
+    digitalWrite(og3::kMoisturePowerPin, HIGH);
+#endif
     og3::start_sleep();
-  }
-
-  // Here, we are in "normal mode" and the LoRa radio is running.
-
-  // Just once, read the sensors, and send a LoRa packet.
-  static bool s_sent = false;
-  if (!s_sent) {
-    og3::s_packet_sender.update();
-    s_sent = true;
-  }
-
-  // Here, we have sent a packet and may send further ones before sleeping.
-  // Wait for is_sending() to be unset, meaning that all packets have been sent,
-  //  then wait for 1 second and then go to sleep.
-  if (og3::s_packet_sender.is_sending()) {
     return;
   }
 
-  // Here, all packets have been sent.
-  // Schedule a sleep in 1 second if not yet started.
-  static bool s_sleep_started = false;
-  if (!s_sleep_started) {
-    s_sleep_started = true;
-    og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
-    og3::s_led.blink(1);
+  // State machine for normal mode
+  enum class NormalState {
+    kInitBootDescriptions,
+    kWaitingForDescriptions,
+    kWaitingBetweenDescAndReadings,
+    kWaitingToSampleAndSend,
+    kWaitingForSleep,
+  };
+  static NormalState s_normal_state =
+      og3::s_boot ? NormalState::kInitBootDescriptions : NormalState::kWaitingToSampleAndSend;
+  static uint32_t s_desc_finish_ms = 0;
+
+  switch (s_normal_state) {
+    case NormalState::kInitBootDescriptions:
+      // Start sending description packets (every 15s)
+      og3::s_packet_sender.update();
+      s_normal_state = NormalState::kWaitingForDescriptions;
+      break;
+
+    case NormalState::kWaitingForDescriptions:
+      // Wait while description packets are still being sent (every 15s at boot)
+      if (og3::s_packet_sender.is_sending()) {
+        return;
+      }
+      // All description packets have finished sending.
+      // Record timestamp to wait 15 seconds before the first sensor reading.
+      s_desc_finish_ms = millis();
+      s_normal_state = NormalState::kWaitingBetweenDescAndReadings;
+      break;
+
+    case NormalState::kWaitingBetweenDescAndReadings: {
+      constexpr uint32_t kDescToReadingWaitMs = 15 * og3::kMsecInSec;
+      const uint32_t elapsed = millis() - s_desc_finish_ms;
+#ifdef HAVE_MOISTURE_POWER_CTL
+      if (elapsed >= kDescToReadingWaitMs - og3::kMoistureSettleMs) {
+        // Power ON moisture sensor 500ms before reading so it has settled
+        digitalWrite(og3::kMoisturePowerPin, LOW);
+      }
+#endif
+      if (elapsed < kDescToReadingWaitMs) {
+        return;
+      }
+      // 15 seconds have elapsed and moisture sensor is settled; take and send readings
+      og3::s_boot = false;
+      og3::s_packet_sender.update();
+#ifdef HAVE_MOISTURE_POWER_CTL
+      digitalWrite(og3::kMoisturePowerPin, HIGH);  // Power OFF moisture sensor
+#endif
+      s_normal_state = NormalState::kWaitingForSleep;
+      og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
+      og3::s_led.blink(1);
+      break;
+    }
+
+    case NormalState::kWaitingToSampleAndSend:
+#ifdef HAVE_MOISTURE_POWER_CTL
+      if (millis() < og3::kMoistureSettleMs) {
+        return;  // Still within the settling window (from boot wake)
+      }
+#endif
+      // Sample all sensors and send readings packet
+      og3::s_packet_sender.update();
+#ifdef HAVE_MOISTURE_POWER_CTL
+      digitalWrite(og3::kMoisturePowerPin, HIGH);  // Power OFF moisture sensor
+#endif
+      // Since RFM95W doesn't provide a reliable tx-done signal,
+      //  schedule deep sleep in 1 second using og3 tasks.
+      s_normal_state = NormalState::kWaitingForSleep;
+      og3::s_app.tasks().runIn(og3::kMsecInSec, og3::start_sleep);
+      og3::s_led.blink(1);
+      break;
+
+    case NormalState::kWaitingForSleep:
+      // Waiting for the 1-second task to trigger start_sleep().
+      // og3::s_app.loop() continues executing in the background.
+      break;
   }
 }
