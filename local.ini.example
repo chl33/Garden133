@@ -1,5 +1,5 @@
 [platformio]
-default_envs = board1_usb
+default_envs = board1_usb, board70_usb, board80_usb
 
 [local]
 build_flags =
@@ -7,7 +7,7 @@ build_flags =
 
 wifi_upload_flags =
 
-;; garden9.local ().  The first v6.2 board. Says '1c' on the board.
+;; Example v6.2 board (RFM95W SX1276 LoRa module)
 [board1]
 extends = node32s
 build_flags =
@@ -24,3 +24,25 @@ upload_flags =
 
 [env:board1_usb]
 extends = board1, usb
+
+;; Example v7.0 board (adds P-MOSFET moisture sensor power control on GPIO25)
+[board70]
+extends = node32s
+build_flags =
+        ${node32s.build_flags}
+	'-D HARDWARE_VERSION_MAJOR=7'
+	'-D HARDWARE_VERSION_MINOR=0'
+
+[env:board70_usb]
+extends = board70, usb
+
+;; Example v8.0 board (Ai-Thinker Ra-01SH SX1262 LoRa module + active-low debug DIP switch)
+[board80]
+extends = node32s
+build_flags =
+        ${node32s.build_flags}
+	'-D HARDWARE_VERSION_MAJOR=8'
+	'-D HARDWARE_VERSION_MINOR=0'
+
+[env:board80_usb]
+extends = board80, usb

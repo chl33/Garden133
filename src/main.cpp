@@ -28,7 +28,7 @@
 #include "svelteesp32async.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 0
+#define VERSION_MINOR 1
 #define VERSION_PATCH 0
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
@@ -416,6 +416,8 @@ class LoraPacketSender : public satellite::PacketSender {
     s_status_var = s_rtc.code;
     s_board_id_var = s_board_id;
 #if defined(HAVE_STANDBY_INPUT)
+    pinMode(kChrgPin, INPUT_PULLUP);
+    pinMode(kStbyPin, INPUT_PULLUP);
     s_var_charge = s_din_chrg.read() ? 1 : 0;
     s_var_standby = s_din_stby.read() ? 1 : 0;
 #endif
@@ -526,6 +528,8 @@ NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   s_battery_sensor.read();
   s_solar_sensor.read();
 #if defined(HAVE_STANDBY_INPUT)
+  pinMode(kChrgPin, INPUT_PULLUP);
+  pinMode(kStbyPin, INPUT_PULLUP);
   s_var_charge = s_din_chrg.read() ? 1 : 0;
   s_var_standby = s_din_stby.read() ? 1 : 0;
 #endif
@@ -662,6 +666,8 @@ NetHandlerStatus apiGetStatus(NetRequest* request, NetResponse* response) {
   status["batteryVoltage"] = s_battery_sensor.value();
   status["solarVoltage"] = s_solar_sensor.value();
 #if defined(HAVE_STANDBY_INPUT)
+  pinMode(kChrgPin, INPUT_PULLUP);
+  pinMode(kStbyPin, INPUT_PULLUP);
   status["charging"] = s_din_chrg.read();
   status["standby"] = s_din_stby.read();
 #endif
@@ -994,6 +1000,10 @@ void setup() {
   og3::s_app.web_server_module().on("/old_lora", HTTP_GET, og3::handleLoraConfig);
   og3::s_app.web_server_module().on("/old_lora", HTTP_POST, og3::handleLoraConfig);
   og3::s_app.setup();
+#if defined(HAVE_STANDBY_INPUT)
+  pinMode(og3::kChrgPin, INPUT_PULLUP);
+  pinMode(og3::kStbyPin, INPUT_PULLUP);
+#endif
 }
 
 void loop() {
