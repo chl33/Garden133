@@ -8,5 +8,6 @@ repos:
                 .*/.pio/.*|
                 .*\.proto|
                 .*\.json|
-                .*\.js
+                .*\.js|
+                src/svelteesp32async\.h
             )$

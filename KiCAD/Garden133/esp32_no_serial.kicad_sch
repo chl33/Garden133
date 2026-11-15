@@ -66,7 +66,7 @@
 					(hide yes)
 				)
 			)
-			(property "ki_fp_filters" "USB*"
+			(property "ki_fp_filters" "USB*Micro*B*"
 				(at 0 0 0)
 				(effects
 					(font
@@ -1997,10 +1997,6 @@
 		(uuid "722bc918-5a42-4d83-967a-25917297d781")
 	)
 	(no_connect
-		(at 63.5 73.66)
-		(uuid "74190149-800a-4fe7-891b-b7af9ffae82b")
-	)
-	(no_connect
 		(at 33.02 86.36)
 		(uuid "74b1594a-a770-4003-bc19-dff108a96efa")
 	)
@@ -2011,10 +2007,6 @@
 	(no_connect
 		(at 118.11 120.65)
 		(uuid "a5272003-d211-4c32-82b5-d1ee42b3fe78")
-	)
-	(no_connect
-		(at 63.5 88.9)
-		(uuid "b43f04c4-81b2-4a66-a929-0bb31fc65902")
 	)
 	(no_connect
 		(at 63.5 63.5)
@@ -2084,6 +2076,16 @@
 	)
 	(wire
 		(pts
+			(xy 163.83 78.74) (xy 175.26 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6664506d-7a2b-47e7-8e0c-17cc1807c905")
+	)
+	(wire
+		(pts
 			(xy 33.02 39.37) (xy 33.02 45.72)
 		)
 		(stroke
@@ -2101,6 +2103,28 @@
 			(type default)
 		)
 		(uuid "f9632d21-ecdd-4821-94b2-8fab30399b7e")
+	)
+	(global_label "GPIO25"
+		(shape input)
+		(at 63.5 88.9 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "08961a6c-ff38-4e5c-8914-df4e4d30d215")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 73.3795 88.9 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
 	)
 	(global_label "GPIO19"
 		(shape input)
@@ -2344,6 +2368,28 @@
 			)
 		)
 	)
+	(global_label "GPIO17"
+		(shape input)
+		(at 63.5 73.66 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "74190149-800a-4fe7-891b-b7af9ffae82b")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 73.3795 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
 	(global_label "EN"
 		(shape input)
 		(at 149.86 77.47 180)
@@ -2412,7 +2458,7 @@
 	)
 	(global_label "GPIO0"
 		(shape input)
-		(at 163.83 78.74 0)
+		(at 175.26 78.74 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -2422,7 +2468,7 @@
 		)
 		(uuid "9c2261d1-ee05-44e1-a1bc-63eda36718f4")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 171.9279 78.6606 0)
+			(at 183.3579 78.6606 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2741,7 +2787,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" ""
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
 			(at 64.77 30.48 0)
 			(effects
 				(font
@@ -3017,6 +3063,76 @@
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/2232304f-fcd8-4820-80f3-0c3941c3f7c5"
 					(reference "U4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 175.26 74.93 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "56545e4e-a872-4e43-9034-c3c03727f314")
+		(property "Reference" "Ru8"
+			(at 177.8 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "10k"
+			(at 177.8 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder"
+			(at 175.26 74.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 175.26 74.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 175.26 74.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "45a2eb3b-b96c-474d-99b7-949da9891dbf")
+		)
+		(pin "2"
+			(uuid "5f2aedd6-258e-468d-a064-2f6c36a918b8")
+		)
+		(instances
+			(project "Garden133"
+				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/2232304f-fcd8-4820-80f3-0c3941c3f7c5"
+					(reference "Ru8")
 					(unit 1)
 				)
 			)
@@ -3374,7 +3490,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF"
+		(property "Value" "1uF"
 			(at 29.21 52.07 90)
 			(effects
 				(font
@@ -3826,6 +3942,72 @@
 			(project "Garden133"
 				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/2232304f-fcd8-4820-80f3-0c3941c3f7c5"
 					(reference "Ru7")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 175.26 71.12 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e162125a-d2f8-4105-b72e-525eb36a82e1")
+		(property "Reference" "#PWR054"
+			(at 175.26 77.47 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 175.26 65.405 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 175.26 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 175.26 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 175.26 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "efbe11e8-7548-4e49-9887-c379acaf1188")
+		)
+		(instances
+			(project "Garden133"
+				(path "/f291efaa-4a5d-4b0c-9fc2-9a2012037d5f/2232304f-fcd8-4820-80f3-0c3941c3f7c5"
+					(reference "#PWR054")
 					(unit 1)
 				)
 			)

@@ -23,13 +23,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: svelte/package-lock.json
 
       - name: Install Node.js dependencies
         working-directory: svelte
-        run: npm install
+        run: npm ci
 
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
