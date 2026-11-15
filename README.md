@@ -6,6 +6,10 @@ It reads the moisture level of soil using a capacitive moisture sensor and trans
 Please see the [Introducing Garden133](https://selectiveappeal.org/posts/garden133/) blog
 post for a project overview.
 
+> [!WARNING]
+> For Board V8.0, do not populate resistors `RL1` and `RL2`. These can cause a short
+> across the TP4056 IC!
+
 ![Garden133 in enclosure](images/garden133-board-in-enclosure-768x652.webp)
 
 ## Features
