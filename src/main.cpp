@@ -59,7 +59,7 @@ constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
 
 #ifdef HAVE_MOISTURE_POWER_CTL
-constexpr uint32_t kMoistureSettleMs = 800;
+constexpr uint32_t kMoistureSettleMs = 100;
 #endif
 
 constexpr size_t kLoraPacketSize = 255;
