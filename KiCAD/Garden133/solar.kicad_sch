@@ -5473,7 +5473,6 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "e0036096-5588-4937-6096-000000000001")
 		(property "Reference" "#PWR053"
 			(at 60.96 62.23 0)
@@ -5485,7 +5484,7 @@
 			)
 		)
 		(property "Value" "+3.3V"
-			(at 60.96 50.165 0)
+			(at 62.23 52.07 0)
 			(effects
 				(font
 					(size 1.27 1.27)
