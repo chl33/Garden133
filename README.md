@@ -26,7 +26,7 @@ This project includes the custom hardware design and 3D printable parts.
   - **Board v6.x:** Adds TP4056 charge/standby status inputs.
   - **Board v7.0:** Adds P-channel MOSFET (`AO3401A` on GPIO25) to power off the capacitive moisture sensor during sleep.
   - **Board v8.0:** Transitions to the Ai-Thinker Ra-01SH (`SX1262`) LoRa transceiver and an active-low debug DIP switch with external pull-up.
-  ![Garden133 PCBA](images/garden133-pcba.png)
+  ![Garden133 PCBA](images/garden133_pcb_v80.png)
 - **Enclosure & Fixtures:** OpenSCAD files for the waterproof enclosure, desiccant inserts, mounts, and solder-paste stencil fixtures are in [`OpenSCAD/`](OpenSCAD/).
 
 ## Firmware Dependencies
