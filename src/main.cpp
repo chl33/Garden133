@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <SPI.h>
+#include <driver/gpio.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
@@ -34,7 +35,7 @@
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
 #define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
 
-#if HARDWARE_VERSION_MAJOR > 5
+#if HARDWARE_VERSION_MAJOR > 5 && HARDWARE_VERSION_MAJOR < 8
 #define HAVE_STANDBY_INPUT
 #endif
 #if HARDWARE_VERSION_MAJOR >= 7
@@ -116,6 +117,9 @@ inline bool read_debug_switch() {
 #endif
 }
 constexpr int kLedPin = 16;
+#ifdef HAVE_MOISTURE_POWER_CTL
+bool s_moisture_trace_active = false;
+#endif
 #if defined(HAVE_STANDBY_INPUT)
 // NOTE: it looks from the circuit diagram that these pins should be reversed, but
 //  these are the pin assignments that work in testing.
@@ -546,6 +550,9 @@ NetHandlerStatus handleWebRoot(NetRequest* request, NetResponse* response) {
   s_solar_sensor.add_html_button(&s_html);
 
   s_html += HTML_BUTTON("/lora", "LoRa");
+#ifdef HAVE_MOISTURE_POWER_CTL
+  s_html += HTML_BUTTON("/api/moisture/trace", "Moisture Trace (CSV)");
+#endif
   s_button_wifi_config.add_button(&s_html);
   s_button_mqtt_config.add_button(&s_html);
   s_button_app_status.add_button(&s_html);
@@ -578,6 +585,13 @@ void start_sleep() {
   }
 
   og3::s_lora.sleep();
+
+  // Hold LoRa NSS (GPIO5) HIGH during deep sleep so it cannot float low
+  // and wake the SX1262 (Ra-01SH) into STDBY_RC mode (~600 uA).
+  pinMode(kLoraSS, OUTPUT);
+  digitalWrite(kLoraSS, HIGH);
+  gpio_hold_en(static_cast<gpio_num_t>(kLoraSS));
+  gpio_deep_sleep_hold_en();
 
   // Set a timer which will wakeup the board, then put the board into deep sleep.
   s_rtc.last_wake_secs = s_rtc.expected_wake_secs;
@@ -725,6 +739,100 @@ NetHandlerStatus putMoistureConfig(NetRequest* request, NetResponse* response,
   response->send(200, "text/plain", "ok");
   NET_REPLY(request, ESP_OK);
 }
+
+#ifdef HAVE_MOISTURE_POWER_CTL
+struct MoistureTraceSample {
+  uint32_t time_us;
+  int raw_counts;
+  float moisture_pct;
+};
+
+constexpr size_t kMaxMoistureTraceSamples = 500;
+static std::vector<MoistureTraceSample> s_moisture_trace;
+static uint32_t s_trace_off_ms = 3000;
+static uint32_t s_trace_duration_ms = 1500;
+static uint32_t s_trace_step_ms = 5;
+static uint32_t s_trace_start_us = 0;
+
+void sampleMoistureTraceStep() {
+  const uint32_t elapsed_us = static_cast<uint32_t>(esp_timer_get_time()) - s_trace_start_us;
+  const float pct = s_moisture.read();
+  const int raw = s_moisture.raw_counts();
+  s_moisture_trace.push_back({elapsed_us, raw, pct});
+
+  if (elapsed_us / 1000 < s_trace_duration_ms &&
+      s_moisture_trace.size() < kMaxMoistureTraceSamples) {
+    s_app.tasks().runIn(s_trace_step_ms, sampleMoistureTraceStep);
+  } else {
+    s_moisture_trace_active = false;
+    s_app.log().logf("Moisture trace complete: %u samples captured.",
+                     static_cast<unsigned>(s_moisture_trace.size()));
+  }
+}
+
+void startMoistureTraceCapture(uint32_t off_ms, uint32_t duration_ms, uint32_t step_ms) {
+  if (s_moisture_trace_active) {
+    return;
+  }
+  s_moisture_trace_active = true;
+  s_trace_off_ms = off_ms;
+  s_trace_duration_ms = duration_ms;
+  s_trace_step_ms = step_ms > 0 ? step_ms : 1;
+  s_moisture_trace.clear();
+  s_moisture_trace.reserve(kMaxMoistureTraceSamples);
+
+  // Turn OFF moisture sensor power so its smoothing capacitor fully discharges.
+  digitalWrite(kMoisturePowerPin, HIGH);
+  s_app.log().logf("Moisture trace: sensor power OFF for %u ms...", s_trace_off_ms);
+
+  s_app.tasks().runIn(s_trace_off_ms, []() {
+    // Record baseline right before turning power ON (optional t=0 reference)
+    digitalWrite(kMoisturePowerPin, LOW);
+    s_trace_start_us = static_cast<uint32_t>(esp_timer_get_time());
+    sampleMoistureTraceStep();
+  });
+}
+
+NetHandlerStatus apiGetMoistureTraceCsv(NetRequest* request, NetResponse* response) {
+  if (request->hasParam("start")) {
+    const uint32_t off_ms =
+        request->hasParam("off_ms") ? request->getParam("off_ms")->value().toInt() : 3000;
+    const uint32_t duration_ms =
+        request->hasParam("duration_ms") ? request->getParam("duration_ms")->value().toInt() : 1500;
+    const uint32_t step_ms =
+        request->hasParam("step_ms") ? request->getParam("step_ms")->value().toInt() : 5;
+    startMoistureTraceCapture(off_ms, duration_ms, step_ms);
+    response->send(202, "text/plain",
+                   "Capture started. Wait ~5 seconds and GET /api/moisture/trace for CSV.\n");
+    NET_REPLY(request, ESP_OK);
+  }
+
+  if (s_moisture_trace_active) {
+    response->send(202, "text/plain", "Capture in progress, please retry in a few seconds...\n");
+    NET_REPLY(request, ESP_OK);
+  }
+
+  if (s_moisture_trace.empty()) {
+    startMoistureTraceCapture(3000, 1500, 5);
+    response->send(202, "text/plain",
+                   "No trace captured yet. Starting default capture (3000ms OFF, 1500ms @ 5ms). "
+                   "Refresh in ~5 seconds to download CSV.\n");
+    NET_REPLY(request, ESP_OK);
+  }
+
+  s_body.clear();
+  s_body.reserve(s_moisture_trace.size() * 28 + 64);
+  s_body += "time_ms,time_us,adc_counts,moisture_pct\n";
+  char line[64];
+  for (const auto& pt : s_moisture_trace) {
+    snprintf(line, sizeof(line), "%.3f,%u,%d,%.2f\n", pt.time_us / 1000.0f, pt.time_us,
+             pt.raw_counts, pt.moisture_pct);
+    s_body += line;
+  }
+  response->send(200, "text/csv", s_body.c_str());
+  NET_REPLY(request, ESP_OK);
+}
+#endif
 
 }  // namespace og3
 
@@ -909,6 +1017,9 @@ void run_lora_diagnostics() {
 #endif
 
 void setup() {
+  // Release deep-sleep hold on LoRa NSS (GPIO5) before SPI initialization.
+  gpio_hold_dis(static_cast<gpio_num_t>(og3::kLoraSS));
+
 #ifdef RUN_LORA_PIN_TEST
   run_lora_diagnostics();
 #endif
@@ -982,6 +1093,9 @@ void setup() {
   og3::s_app.web_server_module().on("/api/status", HTTP_GET, og3::apiGetStatus);
   og3::s_app.web_server_module().on("/api/config", HTTP_GET, og3::apiGetConfig);
   og3::s_app.web_server_module().on("/api/moisture/config", HTTP_GET, og3::apiGetMoistureConfig);
+#ifdef HAVE_MOISTURE_POWER_CTL
+  og3::s_app.web_server_module().on("/api/moisture/trace", HTTP_GET, og3::apiGetMoistureTraceCsv);
+#endif
 
   og3::s_app.web_server_module().onJson("/api/wifi", HTTP_PUT, og3::putWifiConfig);
   og3::s_app.web_server_module().onJson("/api/mqtt", HTTP_PUT, og3::putMqttConfig);
@@ -1015,8 +1129,10 @@ void loop() {
 
   if (og3::s_is_debug_mode) {
 #ifdef HAVE_MOISTURE_POWER_CTL
-    // Ensure moisture sensor remains powered ON in debug mode
-    digitalWrite(og3::kMoisturePowerPin, LOW);
+    // Ensure moisture sensor remains powered ON in debug mode (unless capturing a power-on trace)
+    if (!og3::s_moisture_trace_active) {
+      digitalWrite(og3::kMoisturePowerPin, LOW);
+    }
 #endif
     return;  // In debug mode, all the work happens in og3::s_app.loop().
   }
