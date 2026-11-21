@@ -29,7 +29,7 @@
 
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 1
-#define VERSION_PATCH 0
+#define VERSION_PATCH 1
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
 #define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
@@ -59,7 +59,8 @@ constexpr uint32_t kCleeOrg = 0xc133;
 constexpr uint16_t kDevicePktType = 0xde1c;
 
 #ifdef HAVE_MOISTURE_POWER_CTL
-constexpr uint32_t kMoistureSettleMs = 100;
+// constexpr uint32_t kMoistureSettleMs = 100;
+constexpr uint32_t kMoistureSettleMs = 800;
 #endif
 
 constexpr size_t kLoraPacketSize = 255;
@@ -782,7 +783,8 @@ void startMoistureTraceCapture(uint32_t off_ms, uint32_t duration_ms, uint32_t s
 
   // Turn OFF moisture sensor power so its smoothing capacitor fully discharges.
   digitalWrite(kMoisturePowerPin, HIGH);
-  s_app.log().logf("Moisture trace: sensor power OFF for %u ms...", s_trace_off_ms);
+  s_app.log().logf("Moisture trace: sensor power OFF for %lu ms...",
+                   static_cast<unsigned long>(s_trace_off_ms));
 
   s_app.tasks().runIn(s_trace_off_ms, []() {
     // Record baseline right before turning power ON (optional t=0 reference)
@@ -824,8 +826,8 @@ NetHandlerStatus apiGetMoistureTraceCsv(NetRequest* request, NetResponse* respon
   s_body += "time_ms,time_us,adc_counts,moisture_pct\n";
   char line[64];
   for (const auto& pt : s_moisture_trace) {
-    snprintf(line, sizeof(line), "%.3f,%u,%d,%.2f\n", pt.time_us / 1000.0f, pt.time_us,
-             pt.raw_counts, pt.moisture_pct);
+    snprintf(line, sizeof(line), "%.3f,%lu,%d,%.2f\n", pt.time_us / 1000.0f,
+             static_cast<unsigned long>(pt.time_us), pt.raw_counts, pt.moisture_pct);
     s_body += line;
   }
   response->send(200, "text/csv", s_body.c_str());
