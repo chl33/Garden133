@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-21
+
+### Changed
+- **Platform & Framework Upgrade**: Upgraded to `espressif32@^8.0.0` (Arduino-ESP32 3.x / ESP-IDF 5.x) and `chl33/og3@^0.7.1`, added `WiFi` to `lib_deps`, and switched `lib_ldf_mode` to `chain`.
+- **Moisture Sensor Settle Time**: Increased `kMoistureSettleMs` from `100 ms` to `800 ms` for Board v7.0+ switched moisture sensor stabilization.
+
+### Fixed
+- **GCC 14 Format Specifiers**: Updated `uint32_t` log/CSV format specifiers in moisture trace capture to `%lu` with `unsigned long` casts to eliminate `-Wformat` warnings under GCC 14.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added
