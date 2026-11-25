@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-11-25
+
+### Fixed
+- **Board ID / MAC Address on Arduino-ESP32 3.x**: Replaced `WiFi.macAddress(og3::s_rtc.mac)` with `esp_read_mac(og3::s_rtc.mac, ESP_MAC_WIFI_STA)` so the board MAC and LoRa board ID are populated reliably before WiFi initialization (including in deep-sleep mode where WiFi is disabled).
+- **MQTT Discovery Device ID & Soft AP Web Recovery (`og3@^0.7.2`)**: Upgraded `chl33/og3` to `^0.7.2` to fix all-zero MAC addresses in Home Assistant MQTT discovery IDs under `espressif32@^8.0.0` and restore the normal device home page after temporary Soft AP failover.
+
 ## [1.1.1] - 2026-11-21
 
 ### Changed
