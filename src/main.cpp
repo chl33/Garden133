@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <driver/gpio.h>
+#include <esp_mac.h>
 #include <og3/adc_voltage.h>
 #include <og3/blink_led.h>
 #include <og3/config_module.h>
@@ -29,7 +30,7 @@
 
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 1
-#define VERSION_PATCH 1
+#define VERSION_PATCH 2
 #define STR(X) #X
 #define MAKE_VERSION(MAJOR, MINOR, PATCH) STR(MAJOR) "." STR(MINOR) "." STR(PATCH)
 #define VERSION MAKE_VERSION(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
@@ -863,7 +864,7 @@ void setup() {
       // Normal operation, but first-time boot, not waking from deep sleep.
       og3::s_boot = true;
       memset(&og3::s_rtc, 0, sizeof(og3::s_rtc));
-      WiFi.macAddress(og3::s_rtc.mac);
+      esp_read_mac(og3::s_rtc.mac, ESP_MAC_WIFI_STA);
       og3::s_rtc.code |= og3::Status::kPowerOn;
       og3::s_app.log().debug("First wake, pausing sleep");
       og3::s_packet_sender.set_is_sending(true);
@@ -883,7 +884,7 @@ void setup() {
     og3::s_boot = true;
     constexpr auto kInitialWait = 10 * og3::kMsecInSec;
     constexpr auto kUpdatePeriod = og3::kMsecInMin;
-    WiFi.macAddress(og3::s_rtc.mac);
+    esp_read_mac(og3::s_rtc.mac, ESP_MAC_WIFI_STA);
     og3::s_hourly_lora.reset(new og3::PeriodicTaskScheduler(
         kInitialWait, kUpdatePeriod, []() { og3::s_packet_sender.update(); }, &og3::s_app.tasks()));
     // Blink twice on boot if debug mode.
